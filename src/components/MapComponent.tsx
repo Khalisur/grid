@@ -742,6 +742,258 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 	}, [user, users, toast, updateSelection]);
 
+	// Function to load user properties on the map
+	const loadProperties = useCallback(() => {
+		if (!map.current || !map.current.isStyleLoaded() || !users || Object.keys(users).length === 0) {
+			console.warn('Cannot load properties: Map not ready or users data not available');
+			return;
+		}
+
+		console.log('Starting property loading process...');
+		console.log('Users data available:', Object.keys(users).length, 'users');
+		
+		if (user) {
+			console.log('Current user uid:', user.uid);
+			console.log('All users:', users);
+			if (users[user.uid]) {
+				console.log('Current user data:', users[user.uid]);
+				console.log('Current user properties count:', users[user.uid]?.properties?.length || 0);
+			} else {
+				console.warn('Current user data not found in users object!');
+			}
+		}
+
+		// Create features for all properties
+		const allFeatures: GeoJSON.Feature[] = [];
+		
+		// Process all users and their properties
+		Object.values(users).forEach(userData => {
+			if (!userData.properties || userData.properties.length === 0) return;
+			
+			console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`);
+			
+			userData.properties.forEach(property => {
+				// Skip empty properties
+				if (!property.cells || property.cells.length === 0) {
+					console.warn('Skipping property with no cells:', property.id);
+					return;
+				}
+				
+				console.log(`Processing property ${property.id} with ${property.cells.length} cells`);
+				
+				// Instead of creating a MultiPolygon, create individual Polygon features for each cell
+				property.cells.forEach(cellKey => {
+					try {
+						const parts = cellKey.split(',');
+						if (parts.length !== 2) {
+							console.warn('Invalid cell key format:', cellKey);
+							return;
+						}
+						
+						const lngIndex = parseInt(parts[0], 10);
+						const latIndex = parseInt(parts[1], 10);
+						
+						if (isNaN(lngIndex) || isNaN(latIndex)) {
+							console.warn('Invalid cell coordinates:', cellKey);
+							return;
+						}
+						
+						const lng = lngIndex * GRID_SIZE;
+						const lat = latIndex * GRID_SIZE_LAT;
+						
+						// Create a polygon for this cell
+						const cellPolygon: GeoJSON.Position[][] = [[
+							[lng, lat],
+							[lng + GRID_SIZE, lat], 
+							[lng + GRID_SIZE, lat + GRID_SIZE_LAT],
+							[lng, lat + GRID_SIZE_LAT],
+							[lng, lat]
+						]];
+						
+						// Create a feature for this cell
+						const cellFeature: GeoJSON.Feature = {
+							type: 'Feature',
+							properties: {
+								id: property.id,
+								owner: property.owner,
+								price: property.price,
+								cellCount: property.cells.length,
+								isOwnProperty: user && property.owner === user.uid,
+								cellKey: cellKey,
+								forSale: property.forSale || false,
+								salePrice: property.salePrice || 0,
+								name: property.name || '',
+								description: property.description || '',
+								address: property.address || ''
+							},
+							geometry: {
+								type: 'Polygon',
+								coordinates: cellPolygon
+							}
+						};
+						
+						allFeatures.push(cellFeature);
+					} catch (err) {
+						console.error('Error processing cell:', cellKey, err);
+					}
+				});
+			});
+		});
+		
+		console.log(`Loaded ${allFeatures.length} total property cells`);
+		
+		try {
+			// Check if the map is still valid
+			if (!map.current || !map.current.isStyleLoaded()) {
+				console.warn('Map no longer valid when trying to add property features');
+				return;
+			}
+			
+			// Add or update sources
+			if (map.current.getSource(PROPERTIES_SOURCE_ID)) {
+				console.log('Updating existing properties source with new data');
+				(map.current.getSource(PROPERTIES_SOURCE_ID) as mapboxgl.GeoJSONSource).setData({
+					type: 'FeatureCollection',
+					features: allFeatures
+				});
+			} else {
+				console.log('Creating new properties source and layer');
+				// Add source first
+				map.current.addSource(PROPERTIES_SOURCE_ID, {
+					type: 'geojson',
+					data: {
+						type: 'FeatureCollection',
+						features: allFeatures
+					}
+				});
+				
+				// Add layer for all properties - base layer with increased visibility
+				map.current.addLayer({
+					id: PROPERTIES_LAYER_ID,
+					type: 'fill',
+					source: PROPERTIES_SOURCE_ID,
+					paint: {
+						'fill-opacity': 0.7, // Increased opacity for better visibility
+						'fill-color': [
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#4CAF50', // Green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FFC107', // Yellow for properties for sale
+							'#F44336'  // Red for other properties
+						],
+						'fill-outline-color': [
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#2E7D32', // Darker green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FF8F00', // Darker yellow for properties for sale
+							'#B71C1C'  // Darker red for other properties
+						]
+					}
+				});
+				
+				// Add an outline layer for better visibility
+				map.current.addLayer({
+					id: 'property-outline',
+					type: 'line',
+					source: PROPERTIES_SOURCE_ID,
+					paint: {
+						'line-color': [
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#2E7D32', // Darker green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FF8F00', // Darker yellow for properties for sale
+							'#B71C1C'  // Darker red for other properties
+						],
+						'line-width': 2,
+						'line-opacity': 0.9
+					}
+				});
+			}
+			
+			setPropertiesLoaded(true);
+			console.log('Properties successfully loaded on map');
+		} catch (err) {
+			console.error('Error loading properties on map:', err);
+		}
+	}, [users, user]);
+	
+	// Function to refresh property display
+	const refreshPropertyDisplay = useCallback(() => {
+		console.log('Refreshing property display');
+		
+		// First reload properties data
+		loadProperties();
+		
+		// Force a repaint of the properties layer
+		if (map.current && map.current.getLayer(PROPERTIES_LAYER_ID)) {
+			// Update fill color
+			map.current.setPaintProperty(
+				PROPERTIES_LAYER_ID,
+				'fill-color',
+				[
+					'case',
+					['==', ['get', 'isOwnProperty'], true],
+					'#4CAF50', // Green for own properties
+					['==', ['get', 'forSale'], true],
+					'#FFC107', // Yellow for properties for sale
+					'#F44336'  // Red for other properties
+				]
+			);
+			
+			// Update outline color
+			map.current.setPaintProperty(
+				PROPERTIES_LAYER_ID,
+				'fill-outline-color',
+				[
+					'case',
+					['==', ['get', 'isOwnProperty'], true],
+					'#2E7D32', // Darker green for own properties
+					['==', ['get', 'forSale'], true],
+					'#FF8F00', // Darker yellow for properties for sale
+					'#B71C1C'  // Darker red for other properties
+				]
+			);
+			
+			// Update property outline layer if it exists
+			if (map.current.getLayer('property-outline')) {
+				map.current.setPaintProperty(
+					'property-outline',
+					'line-color',
+					[
+						'case',
+						['==', ['get', 'isOwnProperty'], true],
+						'#2E7D32', // Darker green for own properties
+						['==', ['get', 'forSale'], true],
+						'#FF8F00', // Darker yellow for properties for sale
+						'#B71C1C'  // Darker red for other properties
+					]
+				);
+			}
+		}
+	}, [loadProperties]);
+
+	// Update the useEffect for loading properties when users data changes or map loads
+	useEffect(() => {
+		if (map.current && styleLoaded && users && Object.keys(users).length > 0) {
+			console.log('Map and users data ready - loading properties from useEffect');
+			// Add a small delay to ensure the map is fully ready
+			setTimeout(() => {
+				loadProperties();
+			}, 300);
+		}
+	}, [users, styleLoaded, loadProperties]);
+
+	// Update the useEffect for loading properties after a purchase
+	useEffect(() => {
+		if (user && mapInstance && styleLoaded && Object.keys(users || {}).length > 0) {
+			console.log('User logged in or changed, refreshing properties');
+			loadProperties();
+		}
+	}, [user, mapInstance, styleLoaded, users, loadProperties]);
+
 	// Function to handle save property details
 	const handleSavePropertyDetails = async () => {
 		if (!selectedProperty || !user) return;
@@ -775,7 +1027,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Refresh properties
 			await fetchUsers();
-			loadProperties();
+			
+			// Force property reload with a small delay
+			setTimeout(() => {
+				refreshPropertyDisplay();
+			}, 500);
 		} catch (error) {
 			console.error('Error saving property details:', error);
 			toast({
@@ -843,7 +1099,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				
 				// Refresh properties
 				await fetchUsers();
-				loadProperties();
+				
+				// Force property reload with a small delay
+				setTimeout(() => {
+					refreshPropertyDisplay();
+				}, 500);
 			} else {
 				toast({
 					title: 'Error',
@@ -894,13 +1154,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				
 				// Check if the cell is already owned
 				if (isCellAlreadyOwned(cellKey)) {
-					toast({
-						title: 'Cell Unavailable',
-						description: 'This cell is already owned by a user',
-						status: 'warning',
-						duration: 2000,
-						isClosable: true,
-					});
 					return;
 				}
 				
@@ -917,7 +1170,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		
 		// Add temporary mouseup listener
 		document.addEventListener('mouseup', handleMouseUp)
-	}, [isCellAlreadyOwned, toast, updateSelection])
+	}, [isCellAlreadyOwned, updateSelection])
 
 	// Function to handle mouse move for selection
 	const handleMouseMove = useCallback((e: mapboxgl.MapMouseEvent) => {
@@ -1150,203 +1403,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 	}, [])
 
-	// Function to load user properties on the map
-	const loadProperties = useCallback(() => {
-		if (!map.current || !map.current.isStyleLoaded() || !users || Object.keys(users).length === 0) {
-			console.warn('Cannot load properties: Map not ready or users data not available');
-			return;
-		}
-
-		console.log('Starting property loading process...');
-		console.log('Users data available:', Object.keys(users).length, 'users');
-		
-		if (user) {
-			console.log('Current user uid:', user.uid);
-			console.log('All users:', users);
-			if (users[user.uid]) {
-				console.log('Current user data:', users[user.uid]);
-				console.log('Current user properties count:', users[user.uid]?.properties?.length || 0);
-			} else {
-				console.warn('Current user data not found in users object!');
-			}
-		}
-
-		// Create features for all properties
-		const allFeatures: GeoJSON.Feature[] = [];
-		
-		// Process all users and their properties
-		Object.values(users).forEach(userData => {
-			if (!userData.properties || userData.properties.length === 0) return;
-			
-			console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`);
-			
-			userData.properties.forEach(property => {
-				// Skip empty properties
-				if (!property.cells || property.cells.length === 0) {
-					console.warn('Skipping property with no cells:', property.id);
-					return;
-				}
-				
-				console.log(`Processing property ${property.id} with ${property.cells.length} cells`);
-				
-				// Instead of creating a MultiPolygon, create individual Polygon features for each cell
-				property.cells.forEach(cellKey => {
-					try {
-						const parts = cellKey.split(',');
-						if (parts.length !== 2) {
-							console.warn('Invalid cell key format:', cellKey);
-							return;
-						}
-						
-						const lngIndex = parseInt(parts[0], 10);
-						const latIndex = parseInt(parts[1], 10);
-						
-						if (isNaN(lngIndex) || isNaN(latIndex)) {
-							console.warn('Invalid cell coordinates:', cellKey);
-							return;
-						}
-						
-						const lng = lngIndex * GRID_SIZE;
-						const lat = latIndex * GRID_SIZE_LAT;
-						
-						// Create a polygon for this cell
-						const cellPolygon: GeoJSON.Position[][] = [[
-							[lng, lat],
-							[lng + GRID_SIZE, lat], 
-							[lng + GRID_SIZE, lat + GRID_SIZE_LAT],
-							[lng, lat + GRID_SIZE_LAT],
-							[lng, lat]
-						]];
-						
-						// Create a feature for this cell
-						const cellFeature: GeoJSON.Feature = {
-							type: 'Feature',
-							properties: {
-								id: property.id,
-								owner: property.owner,
-								price: property.price,
-								cellCount: property.cells.length,
-								isOwnProperty: user && property.owner === user.uid,
-								cellKey: cellKey,
-								forSale: property.forSale || false,
-								salePrice: property.salePrice || 0,
-								name: property.name || '',
-								description: property.description || '',
-								address: property.address || ''
-							},
-							geometry: {
-								type: 'Polygon',
-								coordinates: cellPolygon
-							}
-						};
-						
-						allFeatures.push(cellFeature);
-					} catch (err) {
-						console.error('Error processing cell:', cellKey, err);
-					}
-				});
-			});
-		});
-		
-		console.log(`Loaded ${allFeatures.length} total property cells`);
-		
-		try {
-			// Check if the map is still valid
-			if (!map.current || !map.current.isStyleLoaded()) {
-				console.warn('Map no longer valid when trying to add property features');
-				return;
-			}
-			
-			// Add or update sources
-			if (map.current.getSource(PROPERTIES_SOURCE_ID)) {
-				console.log('Updating existing properties source with new data');
-				(map.current.getSource(PROPERTIES_SOURCE_ID) as mapboxgl.GeoJSONSource).setData({
-					type: 'FeatureCollection',
-					features: allFeatures
-				});
-			} else {
-				console.log('Creating new properties source and layer');
-				// Add source first
-				map.current.addSource(PROPERTIES_SOURCE_ID, {
-					type: 'geojson',
-					data: {
-						type: 'FeatureCollection',
-						features: allFeatures
-					}
-				});
-				
-				// Add layer for all properties - base layer with increased visibility
-				map.current.addLayer({
-					id: PROPERTIES_LAYER_ID,
-					type: 'fill',
-					source: PROPERTIES_SOURCE_ID,
-					paint: {
-						'fill-opacity': 0.7, // Increased opacity for better visibility
-						'fill-color': [
-							'case',
-							['==', ['get', 'isOwnProperty'], true],
-							'#4CAF50', // Green for own properties
-							['==', ['get', 'forSale'], true],
-							'#FFC107', // Yellow for properties for sale
-							'#F44336'  // Red for other properties
-						],
-						'fill-outline-color': [
-							'case',
-							['==', ['get', 'isOwnProperty'], true],
-							'#2E7D32', // Darker green for own properties
-							['==', ['get', 'forSale'], true],
-							'#FF8F00', // Darker yellow for properties for sale
-							'#B71C1C'  // Darker red for other properties
-						]
-					}
-				});
-				
-				// Add an outline layer for better visibility
-				map.current.addLayer({
-					id: 'property-outline',
-					type: 'line',
-					source: PROPERTIES_SOURCE_ID,
-					paint: {
-						'line-color': [
-							'case',
-							['==', ['get', 'isOwnProperty'], true],
-							'#2E7D32', // Darker green for own properties
-							['==', ['get', 'forSale'], true],
-							'#FF8F00', // Darker yellow for properties for sale
-							'#B71C1C'  // Darker red for other properties
-						],
-						'line-width': 2,
-						'line-opacity': 0.9
-					}
-				});
-			}
-			
-			setPropertiesLoaded(true);
-			console.log('Properties successfully loaded on map');
-		} catch (err) {
-			console.error('Error loading properties on map:', err);
-		}
-	}, [users, user])
-	
-	// Update the useEffect for loading properties when users data changes or map loads
-	useEffect(() => {
-		if (map.current && styleLoaded && users && Object.keys(users).length > 0) {
-			console.log('Map and users data ready - loading properties from useEffect');
-			// Add a small delay to ensure the map is fully ready
-			setTimeout(() => {
-				loadProperties();
-			}, 300);
-		}
-	}, [users, styleLoaded]);
-
-	// Update the useEffect for loading properties after a purchase
-	useEffect(() => {
-		if (user && mapInstance && styleLoaded && Object.keys(users || {}).length > 0) {
-			console.log('User logged in or changed, refreshing properties');
-			loadProperties();
-		}
-	}, [user, mapInstance, styleLoaded, users]);
-
 	// Function to handle buy property
 	const handleBuyProperty = async () => {
 		if (!user) {
@@ -1495,8 +1551,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Force property reload with a small delay
 			setTimeout(() => {
-				console.log('Reloading properties after purchase');
-				loadProperties();
+				refreshPropertyDisplay();
 			}, 500);
 
 			// Add this inside the try block of handleBuyProperty after the setTimeout
