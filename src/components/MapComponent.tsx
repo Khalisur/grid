@@ -101,6 +101,36 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		currentSelectionColor.current = selectionColor
 	}, [selectionColor])
 
+	// Add a ref for the users data to avoid re-renders
+	const usersRef = useRef(users);
+
+	// Update usersRef when users changes
+	useEffect(() => {
+		usersRef.current = users;
+	}, [users]);
+
+	// Function to check if a cell is already owned by any user
+	const isCellAlreadyOwned = useCallback((cellKey: string): boolean => {
+		const currentUsers = usersRef.current;
+		if (!currentUsers || Object.keys(currentUsers).length === 0) return false;
+		
+		// Check all users and their properties
+		for (const userData of Object.values(currentUsers)) {
+			if (!userData.properties || userData.properties.length === 0) continue;
+			
+			for (const property of userData.properties) {
+				if (!property.cells || property.cells.length === 0) continue;
+				
+				// Check if this cell is in the property
+				if (property.cells.includes(cellKey)) {
+					return true;
+				}
+			}
+		}
+		
+		return false;
+	}, []); // No dependency on users
+
 	useEffect(() => {
 		fetchUsers()
 	}, [fetchUsers])
@@ -422,6 +452,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				)
 			}
 		}
+		
+		// Update the ref value
+		currentSelectionColor.current = selectionColor
 	}, [selectionColor])
 
 	// Load saved selections from localStorage
@@ -679,6 +712,18 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			if (distance < 5 && duration < 300) {
 				const cellKey = getCellKey(e.lngLat.lng, e.lngLat.lat)
 				
+				// Check if the cell is already owned
+				if (isCellAlreadyOwned(cellKey)) {
+					toast({
+						title: 'Cell Unavailable',
+						description: 'This cell is already owned by a user',
+						status: 'warning',
+						duration: 2000,
+						isClosable: true,
+					});
+					return;
+				}
+				
 				// Toggle selection mode
 				isSelectionMode.current = !isSelectionMode.current
 				
@@ -692,7 +737,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		
 		// Add temporary mouseup listener
 		document.addEventListener('mouseup', handleMouseUp)
-	}, [])
+	}, [isCellAlreadyOwned, toast, updateSelection])
 
 	// Function to handle mouse move for selection
 	const handleMouseMove = useCallback((e: mapboxgl.MapMouseEvent) => {
@@ -705,10 +750,13 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 		const cellKey = getCellKey(e.lngLat.lng, e.lngLat.lat)
 
-		// Add cell to selection on hover only if in selection mode
-		selectedCells.current.add(cellKey)
-		updateSelection()
-	}, [])
+		// Don't add already owned cells to selection
+		if (!isCellAlreadyOwned(cellKey)) {
+			// Add cell to selection on hover only if in selection mode and not already owned
+			selectedCells.current.add(cellKey)
+			updateSelection()
+		}
+	}, [isCellAlreadyOwned, updateSelection])
 
 	// Initialize map
 	useEffect(() => {
@@ -1098,7 +1146,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				loadProperties();
 			}, 300);
 		}
-	}, [users, loadProperties, styleLoaded]);
+	}, [users, styleLoaded]);
 
 	// Update the useEffect for loading properties after a purchase
 	useEffect(() => {
@@ -1106,7 +1154,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			console.log('User logged in or changed, refreshing properties');
 			loadProperties();
 		}
-	}, [user, mapInstance, styleLoaded, users, loadProperties]);
+	}, [user, mapInstance, styleLoaded, users]);
 
 	// Function to handle buy property
 	const handleBuyProperty = async () => {
@@ -1131,6 +1179,19 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			toast({
 				title: 'Error',
 				description: 'Please select at least one cell to buy',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+			return
+		}
+		
+		// Check if any cells are already owned
+		const ownedCells = selectedCellArray.filter(cell => isCellAlreadyOwned(cell));
+		if (ownedCells.length > 0) {
+			toast({
+				title: 'Error',
+				description: `${ownedCells.length} of the selected cells are already owned and cannot be purchased`,
 				status: 'error',
 				duration: 3000,
 				isClosable: true,
@@ -1279,7 +1340,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				map.current?.off('click', PROPERTIES_LAYER_ID, handlePropertyClick);
 			};
 		}
-	}, [styleLoaded, handlePropertyClick]);
+	}, [styleLoaded, user, users, toast, updateSelection]);
 
 	// When map loads, fetch users to ensure we have the latest data
 	useEffect(() => {
@@ -1297,7 +1358,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			console.log('User logged in, refreshing properties');
 			loadProperties();
 		}
-	}, [user, mapInstance, styleLoaded, users, loadProperties]);
+	}, [user, mapInstance, styleLoaded, users]);
 
 	// Add this helper function after loadProperties
 	// Function to fly to a property location
