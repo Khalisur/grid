@@ -687,13 +687,13 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			}
 			
 			if (!propertyData) {
-				toast({
-					title: 'Error',
-					description: 'Could not find property data',
-					status: 'error',
-					duration: 2000,
-					isClosable: true,
-				});
+				// toast({
+				// 	title: 'Error',
+				// 	description: 'Could not find property data',
+				// 	status: 'error',
+				// 	duration: 2000,
+				// 	isClosable: true,
+				// });
 				return;
 			}
 			
@@ -1212,6 +1212,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				style: `mapbox://styles/mapbox/${currentStyle}`,
 				center: [0, 0],
 				zoom: MIN_GRID_ZOOM,
+				minZoom: 0, // Allow zooming out to global view
 			}
 
 			// Create a map with combined options
@@ -1235,8 +1236,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					if (mounted) {
 						setStyleLoaded(true)
 						drawGrid() // Draw grid when style is loaded
-						// Ensure zoom level is set correctly after style loads
-						newMap.setZoom(MIN_GRID_ZOOM)
+						// Do NOT force zoom level here
 						// Load saved selections after style is loaded
 						const savedSelections = localStorage.getItem(
 							'savedGridSelections',
@@ -1304,6 +1304,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					setLoading(false)
 				}
 			})
+
+			// Handle mouse event for selection
+			newMap.on('click', PROPERTIES_LAYER_ID, handlePropertyClick);
 
 			return () => {
 				mounted = false
