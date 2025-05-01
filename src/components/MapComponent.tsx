@@ -1432,8 +1432,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					>
 						Clear Selection
 					</Button>
-					{selectedCells.current.size > 0 ? (
-						<Button
+					<Button
 							colorScheme="green"
 							size="sm"
 							onClick={handleBuyProperty}
@@ -1441,18 +1440,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							isLoading={isLoading}
 							loadingText="Buying..."
 						>
-							Buy Property ({selectedCells.current.size * propertyPrice} tokens)
+							Buy Property
 						</Button>
-					) : (
-						<Button
-							colorScheme="yellow"
-							size="sm"
-							onClick={handleSaveSelection}
-							boxShadow="md"
-						>
-							Save Selection
-						</Button>
-					)}
 				</Box>
 
 				{/* Show user tokens */}
