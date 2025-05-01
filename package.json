@@ -13,6 +13,10 @@
     "@chakra-ui/react": "^2.10.7",
     "@emotion/react": "^11.11.4",
     "@emotion/styled": "^11.10.5",
+    "@types/uuid": "^10.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
     "firebase": "^11.6.1",
     "framer-motion": "^12.9.2",
     "mapbox-gl": "^2.15.0",
@@ -20,6 +24,7 @@
     "react-dom": "^18.2.0",
     "react-icons": "^5.5.0",
     "react-router-dom": "^6.22.1",
+    "uuid": "^11.1.0",
     "zustand": "^4.5.0"
   },
   "scripts": {
@@ -30,7 +35,8 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest",
     "test:coverage": "vitest run --coverage --watch=false",
-    "server": "json-server --watch db.json --port 3001"
+    "server": "json-server --watch db.json --port 3001",
+    "start:prod": "node server.js"
   },
   "eslintConfig": {
     "extends": "react-app"

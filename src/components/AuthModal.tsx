@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import { useState } from 'react'
 import {
 	Modal,
@@ -37,32 +38,153 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 	const [loading, setLoading] = useState(false)
 	const toast = useToast()
 	const addUser = useUserStore((state) => state.addUser)
+	const fetchUsers = useUserStore((state) => state.fetchUsers)
 
 	const handleSignUp = async () => {
 		try {
 			setLoading(true)
+			
+			// First create the Firebase auth user
 			const userCredential = await createUserWithEmailAndPassword(
 				auth,
 				email,
 				password,
 			)
-			const user = userCredential.user
+			const user = userCredential.user;
+			
+			// Fetch users first to ensure we have the most up-to-date data
+			await fetchUsers();
+			
+			// Get users from the store (after fetching)
+			const users = useUserStore.getState().users;
+			
+			// Check if user already exists in our local state FIRST
+			if (users && users[user.uid]) {
+				console.log('User already exists in local state:', users[user.uid]);
+				
+				// If the user exists but the name is different (or 'User'), update it
+				if (name && (users[user.uid].name === 'User' || users[user.uid].name !== name)) {
+					console.log('Updating existing user name from', users[user.uid].name, 'to', name);
+					
+					// Get the API URL
+					const API_URL = import.meta.env.DEV ? 'http://localhost:3001' : '/api';
+					
+					// Get the user's actual ID (not uid) that JSON Server uses
+					const response = await fetch(`${API_URL}/users?uid=${user.uid}`);
+					const existingUsers = await response.json();
+					
+					if (existingUsers && existingUsers.length > 0) {
+						const userId = existingUsers[0].id; // Get the JSON Server ID
+						
+						// Update the name
+						const updateResponse = await fetch(`${API_URL}/users/${userId}`, {
+							method: 'PATCH',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								name: name,
+							}),
+						});
+						
+						if (updateResponse.ok) {
+							await fetchUsers(); // Refresh users after update
+							toast({
+								title: 'Profile Updated',
+								description: 'Your profile name has been updated',
+								status: 'success',
+								duration: 3000,
+								isClosable: true,
+							});
+						}
+					}
+				} else {
+					toast({
+						title: 'Account linked',
+						description: 'Your account has been linked with your existing profile',
+						status: 'success',
+						duration: 3000,
+						isClosable: true,
+					});
+				}
+				onClose();
+				return;
+			}
 
-			// Create user profile in our store
-			await addUser({
-				uid: user.uid,
-				email: user.email || '',
-				name: name || user.email?.split('@')[0] || 'User',
-			})
-
-			toast({
-				title: 'Account created successfully',
-				description: 'You have been allocated 10 tokens',
-				status: 'success',
-				duration: 3000,
-				isClosable: true,
-			})
-			onClose()
+			// Double check against the API directly
+			const API_URL = import.meta.env.DEV ? 'http://localhost:3001' : '/api';
+			const checkResponse = await fetch(`${API_URL}/users?uid=${user.uid}`);
+			const existingUsers = await checkResponse.json();
+			
+			if (existingUsers && existingUsers.length > 0) {
+				console.log('User already exists in database, not creating duplicate:', existingUsers[0]);
+				
+				// Check if we need to update the name
+				if (name && (existingUsers[0].name === 'User' || existingUsers[0].name !== name)) {
+					console.log('Updating existing user name in API from', existingUsers[0].name, 'to', name);
+					
+					const userId = existingUsers[0].id; // Get the JSON Server ID
+					
+					// Update the name
+					const updateResponse = await fetch(`${API_URL}/users/${userId}`, {
+						method: 'PATCH',
+						headers: {
+							'Content-Type': 'application/json',
+						},
+						body: JSON.stringify({
+							name: name,
+						}),
+					});
+					
+					if (updateResponse.ok) {
+						toast({
+							title: 'Profile Updated',
+							description: 'Your profile has been updated with your chosen name',
+							status: 'success',
+							duration: 3000,
+							isClosable: true,
+						});
+					} else {
+						toast({
+							title: 'Account Linked',
+							description: 'Your account has been linked to your existing profile',
+							status: 'success',
+							duration: 3000,
+							isClosable: true,
+						});
+					}
+				} else {
+					// The user is already in our database with the correct name
+					toast({
+						title: 'Account linked',
+						description: 'Your account has been linked to your existing profile',
+						status: 'success',
+						duration: 3000,
+						isClosable: true,
+					});
+				}
+				
+				// Refresh users to ensure local state is up-to-date
+				await fetchUsers();
+			} else {
+				// User doesn't exist in our database, create a new profile
+				console.log('Creating new user profile in database with name:', name);
+				await addUser({
+					uid: user.uid,
+					email: user.email || '',
+					name: name || user.email?.split('@')[0] || 'User',
+				});
+				
+				toast({
+					title: 'Account created successfully',
+					description: 'You have been allocated 10 tokens',
+					status: 'success',
+					duration: 3000,
+					isClosable: true,
+				});
+			}
+			
+			onClose();
 		} catch (error) {
 			console.error('Signup error:', error)
 			toast({

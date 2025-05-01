@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import {
 	FunctionComponent,
@@ -30,6 +31,8 @@ import { useMapStore } from '../stores/mapStore'
 import { SearchIcon } from '@chakra-ui/icons'
 import { useUserStore } from '../stores/userStore'
 import { useAuthStore } from '../stores/authStore'
+import { v4 as uuidv4 } from 'uuid'
+import { Property } from '../stores/userStore'
 
 // Set Mapbox access token
 mapboxgl.accessToken =
@@ -40,9 +43,14 @@ const GRID_SOURCE_ID = 'grid-source'
 const GRID_LAYER_ID = 'grid-layer'
 const GRID_SELECTION_SOURCE_ID = 'grid-selection-source'
 const GRID_SELECTION_LAYER_ID = 'grid-selection-layer'
+const PROPERTIES_SOURCE_ID = 'properties-source'
+const PROPERTIES_LAYER_ID = 'properties-layer'
+const OWN_PROPERTIES_LAYER_ID = 'own-properties-layer'
+const OTHER_PROPERTIES_LAYER_ID = 'other-properties-layer'
 
 // Define grid size in degrees (approximately 10m x 10m)
 const GRID_SIZE = 0.0001 // 0.0001 degrees ≈ 10m
+const GRID_SIZE_LAT = 0.0000705 // Adjusted to make cells appear as squares
 const MIN_GRID_ZOOM = 17 // Minimum zoom level for grid visibility
 const MAX_GRID_ZOOM = 30 // Maximum zoom level for grid visibility
 
@@ -77,7 +85,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	const { users, updateUserProperty, deductToken, fetchUsers } =
 		useUserStore()
 	const [currentPropertyId, setCurrentPropertyId] = useState<string>('')
+	const [propertyPrice, setPropertyPrice] = useState<number>(1) // Default price per cell
 	const toast = useToast()
+	const [isLoading, setIsLoading] = useState(false)
+	const [propertiesLoaded, setPropertiesLoaded] = useState(false)
 
 	// Get map settings from store
 	const { currentStyle, gridColor, selectionColor } = useMapStore()
@@ -94,6 +105,89 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		fetchUsers()
 	}, [fetchUsers])
 
+	// Add this useEffect to ensure user profile exists with improved debugging
+	useEffect(() => {
+		// If user is authenticated but profile not found, create it
+		const ensureUserProfile = async () => {
+			if (!user) return;
+			
+			// First check if user exists in local state
+			if (users && users[user.uid]) {
+				console.log('User already in local state, no need to create profile');
+				return;
+			}
+			
+			try {
+				console.log('User authenticated but profile not found in local state, checking API...');
+				console.log('Current user:', user);
+				
+				// Check if the user already exists in the API but not in our local state
+				const checkResponse = await fetch(`http://localhost:3001/users?uid=${user.uid}`);
+				const existingUsers = await checkResponse.json();
+				
+				if (existingUsers && existingUsers.length > 0) {
+					console.log('User exists in API but not in local state, refreshing users...');
+					console.log('Existing user found:', existingUsers[0]);
+					await fetchUsers();
+				} else {
+					console.log('User does not exist in API, creating new user profile...');
+					
+					// Use the store's addUser method
+					const addUserFn = useUserStore.getState().addUser;
+					await addUserFn({
+						uid: user.uid,
+						email: user.email || 'unknown@example.com',
+						name: user.displayName || 'User'
+					});
+					
+					// Refresh users list
+					await fetchUsers();
+					
+					toast({
+						title: 'Profile Created',
+						description: 'Welcome! Your profile has been created with 10 starter tokens.',
+						status: 'success',
+						duration: 5000,
+						isClosable: true,
+					});
+				}
+			} catch (error) {
+				console.error('Failed to create user profile:', error);
+				toast({
+					title: 'Error',
+					description: 'Failed to create user profile. Please check console for details.',
+					status: 'error',
+					duration: 5000,
+					isClosable: true,
+				});
+			}
+		};
+
+		// Run when user is available
+		if (user) {
+			ensureUserProfile();
+		}
+	}, [user, users, fetchUsers, toast]);
+
+	// Debug function to inspect users data structure
+	useEffect(() => {
+		if (users && Object.keys(users).length > 0) {
+			console.log('=== DEBUG: USERS DATA STRUCTURE ===');
+			Object.entries(users).forEach(([uid, userData]) => {
+				console.log(`User ${userData.name} (${uid}):`);
+				console.log('  Properties:', userData.properties || 'None');
+				if (userData.properties) {
+					userData.properties.forEach((prop, i) => {
+						console.log(`  Property ${i + 1}:`, prop);
+						console.log(`    ID: ${prop.id}`);
+						console.log(`    Cells: ${prop.cells.length} cells`);
+						console.log(`    Sample cells:`, prop.cells.slice(0, 2));
+					});
+				}
+			});
+		}
+	}, [users]);
+
 	// Function to handle save selection
 	const handleSaveSelection = async () => {
 		if (!user) {
@@ -107,10 +201,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			return
 		}
 
-		if (!currentPropertyId) {
+		if (selectedCells.current.size === 0) {
 			toast({
 				title: 'Error',
-				description: 'Please enter a property ID',
+				description: 'Please select at least one cell to save',
 				status: 'error',
 				duration: 3000,
 				isClosable: true,
@@ -118,36 +212,81 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			return
 		}
 
-		const userProfile = users[user.uid]
+		// Ensure users data is loaded
+		if (!users || Object.keys(users).length === 0) {
+			await fetchUsers();
+		}
+
+		// Check for user profile
+		let userProfile = users[user.uid];
+		
+		// If user not found in local state, check API
 		if (!userProfile) {
-			toast({
-				title: 'Error',
-				description: 'User profile not found',
-				status: 'error',
-				duration: 3000,
-				isClosable: true,
-			})
-			return
-		}
-
-		if (userProfile.tokens <= 0) {
-			toast({
-				title: 'Error',
-				description: 'Insufficient tokens',
-				status: 'error',
-				duration: 3000,
-				isClosable: true,
-			})
-			return
+			console.log('User not found in local state, checking API...');
+			
+			try {
+				// Check if user exists in database but isn't loaded
+				const response = await fetch(`http://localhost:3001/users?uid=${user.uid}`);
+				const existingUsers = await response.json();
+				
+				if (existingUsers && existingUsers.length > 0) {
+					// User exists in database but wasn't in our state
+					console.log('User found in database, loading...');
+					await fetchUsers();
+					userProfile = users[user.uid]; // Update reference after fetching
+				} else {
+					// User doesn't exist in database at all
+					console.log('Creating new user profile...');
+					// Create user via store function (which has duplicate checking)
+					await useUserStore.getState().addUser({
+						uid: user.uid,
+						email: user.email || 'unknown@example.com',
+						name: user.displayName || 'User'
+					});
+					await fetchUsers();
+					userProfile = users[user.uid]; // Update reference after fetching
+				}
+				
+				if (!userProfile) {
+					toast({
+						title: 'Error',
+						description: 'Failed to retrieve or create user profile',
+						status: 'error',
+						duration: 3000,
+						isClosable: true,
+					});
+					return;
+				}
+			} catch (error) {
+				console.error('Error handling user profile:', error);
+				toast({
+					title: 'Error',
+					description: 'Error while checking user profile',
+					status: 'error',
+					duration: 3000,
+					isClosable: true,
+				});
+				return;
+			}
 		}
 
 		try {
-			await deductToken(user.uid)
-			await updateUserProperty(
-				user.uid,
-				parseInt(currentPropertyId, 10),
-				Array.from(selectedCells.current),
-			)
+			// Create a new property with a unique ID (for saved selections)
+			const propertyId = uuidv4()
+			
+			// Create a property object (free, for saved selections)
+			const propertyData: Property = {
+				id: propertyId,
+				owner: user.uid,
+				cells: Array.from(selectedCells.current),
+				price: 0, // Saved selections are free
+			}
+			
+			console.log('Saving property with data:', propertyData);
+			
+			// Save property to user's properties
+			await updateUserProperty(user.uid, propertyData)
+			
 			toast({
 				title: 'Success',
 				description: 'Selection saved successfully',
@@ -155,6 +294,26 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				duration: 3000,
 				isClosable: true,
 			})
+			
+			// Clear selection after saving
+			selectedCells.current.clear()
+			isSelectionMode.current = false
+			updateSelection()
+			
+			// Reload properties on the map
+			await fetchUsers()
+			
+			// Force property reload with a small delay
+			setTimeout(() => {
+				console.log('Reloading properties after save');
+				loadProperties();
+			}, 500);
+
+			// Add this inside the try block of handleSaveSelection after the setTimeout
+			setTimeout(() => {
+				console.log('Flying to newly saved property');
+				flyToProperty(propertyId);
+			}, 1000);
 		} catch (error) {
 			toast({
 				title: 'Error',
@@ -163,6 +322,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				duration: 3000,
 				isClosable: true,
 			})
+			console.error('Save selection error:', error);
 		}
 	}
 
@@ -175,7 +335,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		selectedCells.current.forEach((cellKey) => {
 			const [lngIndex, latIndex] = cellKey.split(',').map(Number)
 			const lng = lngIndex * GRID_SIZE
-			const lat = latIndex * GRID_SIZE
+			const lat = latIndex * GRID_SIZE_LAT
 
 			selectionFeatures.push({
 				type: 'Feature',
@@ -186,8 +346,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						[
 							[lng, lat],
 							[lng + GRID_SIZE, lat],
-							[lng + GRID_SIZE, lat + GRID_SIZE],
-							[lng, lat + GRID_SIZE],
+							[lng + GRID_SIZE, lat + GRID_SIZE_LAT],
+							[lng, lat + GRID_SIZE_LAT],
 							[lng, lat],
 						],
 					],
@@ -304,8 +464,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 			// Calculate grid boundaries aligned to the grid size
 			const startLat =
-				Math.floor(bounds.getSouth() / GRID_SIZE) * GRID_SIZE
-			const endLat = Math.ceil(bounds.getNorth() / GRID_SIZE) * GRID_SIZE
+				Math.floor(bounds.getSouth() / GRID_SIZE_LAT) * GRID_SIZE_LAT
+			const endLat = Math.ceil(bounds.getNorth() / GRID_SIZE_LAT) * GRID_SIZE_LAT
 			const startLng =
 				Math.floor(bounds.getWest() / GRID_SIZE) * GRID_SIZE
 			const endLng = Math.ceil(bounds.getEast() / GRID_SIZE) * GRID_SIZE
@@ -314,7 +474,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const lineFeatures: GeoJSON.Feature[] = []
 
 			// Generate horizontal lines
-			for (let lat = startLat; lat <= endLat; lat += GRID_SIZE) {
+			for (let lat = startLat; lat <= endLat; lat += GRID_SIZE_LAT) {
 				lineFeatures.push({
 					type: 'Feature',
 					properties: {},
@@ -413,24 +573,125 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 	// Function to get grid cell key
 	const getCellKey = (lng: number, lat: number) => {
-		return `${Math.floor(lng / GRID_SIZE)},${Math.floor(lat / GRID_SIZE)}`
+		return `${Math.floor(lng / GRID_SIZE)},${Math.floor(lat / GRID_SIZE_LAT)}`
 	}
+
+	// Function to handle property click
+	const handlePropertyClick = useCallback((e: mapboxgl.MapMouseEvent) => {
+		if (!map.current || !user) {
+			console.log('Property click handler called but map or user not available');
+			return;
+		}
+		
+		console.log('Property click event at:', e.lngLat);
+		
+		// Query all features at the clicked point
+		const features = map.current.queryRenderedFeatures(e.point);
+		console.log('All features at click point:', features.length);
+		
+		// Filter to just properties layer
+		const propertyFeatures = map.current.queryRenderedFeatures(e.point, {
+			layers: [PROPERTIES_LAYER_ID]
+		});
+		
+		console.log('Property features found:', propertyFeatures.length);
+		
+		if (propertyFeatures.length > 0) {
+			const propertyFeature = propertyFeatures[0];
+			const propertyId = propertyFeature.properties?.id;
+			const propertyOwner = propertyFeature.properties?.owner;
+			const isOwnProperty = propertyOwner === user.uid;
+			
+			console.log('Clicked on property:', propertyFeature.properties);
+			
+			if (isOwnProperty) {
+				// Find the property in user data
+				const userData = users[user.uid];
+				if (!userData) {
+					console.warn('User data not found for current user');
+					return;
+				}
+				
+				const property = userData.properties.find(p => p.id === propertyId);
+				if (!property) {
+					console.warn('Property not found in user data:', propertyId);
+					return;
+				}
+				
+				// Select all cells in this property
+				console.log(`Selecting ${property.cells.length} cells from property ${propertyId}`);
+				
+				// Clear current selection
+				selectedCells.current.clear();
+				
+				// Add all property cells to selection
+				property.cells.forEach(cellKey => {
+					selectedCells.current.add(cellKey);
+				});
+				
+				// Update selection display
+				updateSelection();
+				
+				toast({
+					title: 'Property Selected',
+					description: `Selected your property with ${property.cells.length} cells`,
+					status: 'info',
+					duration: 2000,
+					isClosable: true,
+				});
+			} else {
+				// Show info about other user's property
+				toast({
+					title: 'Property Info',
+					description: `This property belongs to another user and has ${propertyFeature.properties?.cellCount} cells`,
+					status: 'info',
+					duration: 2000,
+					isClosable: true,
+				});
+			}
+		} else {
+			console.log('No property features found at click location');
+		}
+	}, [user, users, toast, updateSelection]);
 
 	// Function to handle mouse down for selection
 	const handleMouseDown = useCallback((e: mapboxgl.MapMouseEvent) => {
 		if (!map.current || map.current.getZoom() < MIN_GRID_ZOOM) return
-
-		const cellKey = getCellKey(e.lngLat.lng, e.lngLat.lat)
-
-		// Toggle selection mode
-		isSelectionMode.current = !isSelectionMode.current
-
-		// If turning on selection mode, select the clicked cell
-		if (isSelectionMode.current) {
-			selectedCells.current.add(cellKey)
+		
+		// Store the mouse down position and time to later determine if it was a click or drag
+		const mouseDownTime = Date.now()
+		const mouseDownPos = { x: e.originalEvent.clientX, y: e.originalEvent.clientY }
+		
+		// Define handler for mouseup to determine if this was a click or drag
+		const handleMouseUp = (upEvent: MouseEvent) => {
+			// Remove listener since we only need it once
+			document.removeEventListener('mouseup', handleMouseUp)
+			
+			// Calculate time and distance
+			const mouseUpTime = Date.now()
+			const dx = upEvent.clientX - mouseDownPos.x
+			const dy = upEvent.clientY - mouseDownPos.y
+			const distance = Math.sqrt(dx * dx + dy * dy)
+			const duration = mouseUpTime - mouseDownTime
+			
+			// If mouse moved less than 5px and duration less than 300ms, consider it a click for selection
+			// Otherwise, it was likely a pan operation
+			if (distance < 5 && duration < 300) {
+				const cellKey = getCellKey(e.lngLat.lng, e.lngLat.lat)
+				
+				// Toggle selection mode
+				isSelectionMode.current = !isSelectionMode.current
+				
+				// If turning on selection mode, select the clicked cell
+				if (isSelectionMode.current) {
+					selectedCells.current.add(cellKey)
+					updateSelection()
+				}
+			}
 		}
-
-		updateSelection()
+		
+		// Add temporary mouseup listener
+		document.addEventListener('mouseup', handleMouseUp)
 	}, [])
 
 	// Function to handle mouse move for selection
@@ -447,11 +708,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		// Add cell to selection on hover only if in selection mode
 		selectedCells.current.add(cellKey)
 		updateSelection()
-	}, [])
-
-	// Function to handle mouse up to end selection
-	const handleMouseUp = useCallback(() => {
-		// Keep selection mode active after mouse up
 	}, [])
 
 	// Initialize map
@@ -536,8 +792,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			// Add mouse event listeners for selection
 			newMap.on('mousedown', handleMouseDown)
 			newMap.on('mousemove', handleMouseMove)
-			newMap.on('mouseup', handleMouseUp)
-			newMap.on('mouseleave', handleMouseUp)
+			
+			// Add handler for when mouse leaves the map area during selection
+			newMap.on('mouseleave', () => {
+				// We don't cancel selection mode when mouse leaves the map
+				// This allows users to continue selecting after re-entering the map
+			})
 
 			// Debounce grid updates
 			const debouncedDrawGrid = () => {
@@ -596,7 +856,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		drawGrid,
 		handleMouseDown,
 		handleMouseMove,
-		handleMouseUp,
 	])
 
 	// Update map style when it changes in the store
@@ -663,6 +922,419 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 	}, [])
 
+	// Function to load user properties on the map
+	const loadProperties = useCallback(() => {
+		if (!map.current || !map.current.isStyleLoaded() || !users || Object.keys(users).length === 0) {
+			console.warn('Cannot load properties: Map not ready or users data not available');
+			return;
+		}
+
+		console.log('Starting property loading process...');
+		console.log('Users data available:', Object.keys(users).length, 'users');
+		
+		if (user) {
+			console.log('Current user uid:', user.uid);
+			console.log('All users:', users);
+			if (users[user.uid]) {
+				console.log('Current user data:', users[user.uid]);
+				console.log('Current user properties count:', users[user.uid]?.properties?.length || 0);
+			} else {
+				console.warn('Current user data not found in users object!');
+			}
+		}
+
+		// Create features for all properties
+		const allFeatures: GeoJSON.Feature[] = [];
+		
+		// Process all users and their properties
+		Object.values(users).forEach(userData => {
+			if (!userData.properties || userData.properties.length === 0) return;
+			
+			console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`);
+			
+			userData.properties.forEach(property => {
+				// Skip empty properties
+				if (!property.cells || property.cells.length === 0) {
+					console.warn('Skipping property with no cells:', property.id);
+					return;
+				}
+				
+				console.log(`Processing property ${property.id} with ${property.cells.length} cells`);
+				
+				// Instead of creating a MultiPolygon, create individual Polygon features for each cell
+				property.cells.forEach(cellKey => {
+					try {
+						const parts = cellKey.split(',');
+						if (parts.length !== 2) {
+							console.warn('Invalid cell key format:', cellKey);
+							return;
+						}
+						
+						const lngIndex = parseInt(parts[0], 10);
+						const latIndex = parseInt(parts[1], 10);
+						
+						if (isNaN(lngIndex) || isNaN(latIndex)) {
+							console.warn('Invalid cell coordinates:', cellKey);
+							return;
+						}
+						
+						const lng = lngIndex * GRID_SIZE;
+						const lat = latIndex * GRID_SIZE_LAT;
+						
+						// Create a polygon for this cell
+						const cellPolygon: GeoJSON.Position[][] = [[
+							[lng, lat],
+							[lng + GRID_SIZE, lat], 
+							[lng + GRID_SIZE, lat + GRID_SIZE_LAT],
+							[lng, lat + GRID_SIZE_LAT],
+							[lng, lat]
+						]];
+						
+						// Create a feature for this cell
+						const cellFeature: GeoJSON.Feature = {
+							type: 'Feature',
+							properties: {
+								id: property.id,
+								owner: property.owner,
+								price: property.price,
+								cellCount: property.cells.length,
+								isOwnProperty: user && property.owner === user.uid,
+								cellKey: cellKey
+							},
+							geometry: {
+								type: 'Polygon',
+								coordinates: cellPolygon
+							}
+						};
+						
+						allFeatures.push(cellFeature);
+					} catch (err) {
+						console.error('Error processing cell:', cellKey, err);
+					}
+				});
+			});
+		});
+		
+		console.log(`Loaded ${allFeatures.length} total property cells`);
+		
+		try {
+			// Check if the map is still valid
+			if (!map.current || !map.current.isStyleLoaded()) {
+				console.warn('Map no longer valid when trying to add property features');
+				return;
+			}
+			
+			// Add or update sources
+			if (map.current.getSource(PROPERTIES_SOURCE_ID)) {
+				console.log('Updating existing properties source with new data');
+				(map.current.getSource(PROPERTIES_SOURCE_ID) as mapboxgl.GeoJSONSource).setData({
+					type: 'FeatureCollection',
+					features: allFeatures
+				});
+			} else {
+				console.log('Creating new properties source and layer');
+				// Add source first
+				map.current.addSource(PROPERTIES_SOURCE_ID, {
+					type: 'geojson',
+					data: {
+						type: 'FeatureCollection',
+						features: allFeatures
+					}
+				});
+				
+				// Add layer for all properties - base layer with increased visibility
+				map.current.addLayer({
+					id: PROPERTIES_LAYER_ID,
+					type: 'fill',
+					source: PROPERTIES_SOURCE_ID,
+					paint: {
+						'fill-opacity': 0.7, // Increased opacity for better visibility
+						'fill-color': [
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#4CAF50', // Green for own properties
+							'#F44336'  // Red for other properties
+						],
+						'fill-outline-color': [
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#2E7D32', // Darker green for own properties
+							'#B71C1C'  // Darker red for other properties
+						]
+					}
+				});
+				
+				// Add an outline layer for better visibility
+				map.current.addLayer({
+					id: 'property-outline',
+					type: 'line',
+					source: PROPERTIES_SOURCE_ID,
+					paint: {
+						'line-color': [
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#2E7D32', // Darker green for own properties
+							'#B71C1C'  // Darker red for other properties
+						],
+						'line-width': 2,
+						'line-opacity': 0.9
+					}
+				});
+			}
+			
+			setPropertiesLoaded(true);
+			console.log('Properties successfully loaded on map');
+		} catch (err) {
+			console.error('Error loading properties on map:', err);
+		}
+	}, [users, user])
+	
+	// Update the useEffect for loading properties when users data changes or map loads
+	useEffect(() => {
+		if (map.current && styleLoaded && users && Object.keys(users).length > 0) {
+			console.log('Map and users data ready - loading properties from useEffect');
+			// Add a small delay to ensure the map is fully ready
+			setTimeout(() => {
+				loadProperties();
+			}, 300);
+		}
+	}, [users, loadProperties, styleLoaded]);
+
+	// Update the useEffect for loading properties after a purchase
+	useEffect(() => {
+		if (user && mapInstance && styleLoaded && Object.keys(users || {}).length > 0) {
+			console.log('User logged in or changed, refreshing properties');
+			loadProperties();
+		}
+	}, [user, mapInstance, styleLoaded, users, loadProperties]);
+
+	// Function to handle buy property
+	const handleBuyProperty = async () => {
+		if (!user) {
+			toast({
+				title: 'Error',
+				description: 'You must be logged in to buy property',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+			return
+		}
+
+		// Ensure users data is loaded
+		if (!users || Object.keys(users).length === 0) {
+			await fetchUsers();
+		}
+
+		const selectedCellArray = Array.from(selectedCells.current)
+		if (selectedCellArray.length === 0) {
+			toast({
+				title: 'Error',
+				description: 'Please select at least one cell to buy',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+			return
+		}
+
+		// Check for user profile
+		let userProfile = users[user.uid];
+		
+		// If user not found in local state, check API
+		if (!userProfile) {
+			console.log('User not found in local state, checking API...');
+			
+			try {
+				// Check if user exists in database but isn't loaded
+				const response = await fetch(`http://localhost:3001/users?uid=${user.uid}`);
+				const existingUsers = await response.json();
+				
+				if (existingUsers && existingUsers.length > 0) {
+					// User exists in database but wasn't in our state
+					console.log('User found in database, loading...');
+					await fetchUsers();
+					userProfile = users[user.uid]; // Update reference after fetching
+				} else {
+					// User doesn't exist in database at all
+					console.log('Creating new user profile...');
+					// Create user via store function (which has duplicate checking)
+					await useUserStore.getState().addUser({
+						uid: user.uid,
+						email: user.email || 'unknown@example.com',
+						name: user.displayName || 'User'
+					});
+					await fetchUsers();
+					userProfile = users[user.uid]; // Update reference after fetching
+				}
+				
+				if (!userProfile) {
+					toast({
+						title: 'Error',
+						description: 'Failed to retrieve or create user profile',
+						status: 'error',
+						duration: 3000,
+						isClosable: true,
+					});
+					return;
+				}
+			} catch (error) {
+				console.error('Error handling user profile:', error);
+				toast({
+					title: 'Error',
+					description: 'Error while checking user profile',
+					status: 'error',
+					duration: 3000,
+					isClosable: true,
+				});
+				return;
+			}
+		}
+
+		// At this point we should have a valid user profile
+		const totalCost = selectedCellArray.length * propertyPrice;
+		if (userProfile.tokens < totalCost) {
+			toast({
+				title: 'Error',
+				description: `Insufficient tokens. You need ${totalCost} tokens to buy this property`,
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+			return
+		}
+
+		setIsLoading(true)
+		try {
+			// Create a new property with a unique ID
+			const propertyId = uuidv4()
+			
+			// Create a property object
+			const propertyData: Property = {
+				id: propertyId,
+				owner: user.uid,
+				cells: selectedCellArray,
+				price: totalCost, // Initial purchase price (could be made resellable later)
+			}
+			
+			console.log('Buying property with data:', propertyData);
+			
+			// Deduct tokens for purchase
+			await deductToken(user.uid, totalCost)
+			
+			// Save property to user's properties
+			await updateUserProperty(user.uid, propertyData)
+			
+			toast({
+				title: 'Success',
+				description: `Property purchased successfully for ${totalCost} tokens`,
+				status: 'success',
+				duration: 3000,
+				isClosable: true,
+			})
+			
+			// Clear selection after purchase
+			selectedCells.current.clear()
+			isSelectionMode.current = false
+			updateSelection()
+			
+			// Reload properties on the map
+			await fetchUsers()
+			
+			// Force property reload with a small delay
+			setTimeout(() => {
+				console.log('Reloading properties after purchase');
+				loadProperties();
+			}, 500);
+
+			// Add this inside the try block of handleBuyProperty after the setTimeout
+			setTimeout(() => {
+				console.log('Flying to newly purchased property');
+				flyToProperty(propertyId);
+			}, 1000);
+		} catch (error) {
+			toast({
+				title: 'Error',
+				description: 'Failed to purchase property',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+			console.error('Buy property error:', error)
+		} finally {
+			setIsLoading(false)
+		}
+	}
+
+	// Now add these useEffect hooks after the styleLoaded useEffect but before the return statement
+
+	// Add click handler when map loads
+	useEffect(() => {
+		if (map.current && styleLoaded) {
+			console.log('Adding property click handler to map');
+			map.current.on('click', PROPERTIES_LAYER_ID, handlePropertyClick);
+			
+			return () => {
+				console.log('Removing property click handler from map');
+				map.current?.off('click', PROPERTIES_LAYER_ID, handlePropertyClick);
+			};
+		}
+	}, [styleLoaded, handlePropertyClick]);
+
+	// When map loads, fetch users to ensure we have the latest data
+	useEffect(() => {
+		if (mapInstance && styleLoaded) {
+			console.log('Map loaded and style ready - fetching latest user data');
+			fetchUsers().then(() => {
+				console.log('Users data refreshed after map load');
+			});
+		}
+	}, [mapInstance, styleLoaded, fetchUsers]);
+
+	// When user changes (login/logout), refresh properties display
+	useEffect(() => {
+		if (user && mapInstance && styleLoaded && Object.keys(users || {}).length > 0) {
+			console.log('User logged in, refreshing properties');
+			loadProperties();
+		}
+	}, [user, mapInstance, styleLoaded, users, loadProperties]);
+
+	// Add this helper function after loadProperties
+	// Function to fly to a property location
+	const flyToProperty = useCallback((propertyId: string): void => {
+		if (!map.current || !user || !users[user.uid]) return;
+		
+		const userProperties = users[user.uid].properties || [];
+		const property = userProperties.find(p => p.id === propertyId);
+		
+		if (!property || !property.cells || property.cells.length === 0) {
+			console.warn('Cannot fly to property: property not found or has no cells');
+			return;
+		}
+		
+		// Get the first cell to determine location
+		const firstCell = property.cells[0];
+		const parts = firstCell.split(',');
+		if (parts.length !== 2) return;
+		
+		const lngIndex = parseInt(parts[0], 10);
+		const latIndex = parseInt(parts[1], 10);
+		
+		if (isNaN(lngIndex) || isNaN(latIndex)) return;
+		
+		const lng = lngIndex * GRID_SIZE;
+		const lat = latIndex * GRID_SIZE_LAT;
+		
+		console.log(`Flying to property location: ${lng}, ${lat}`);
+		
+		// Fly to the property location and zoom in enough to see it
+		map.current.flyTo({
+			center: [lng, lat],
+			zoom: Math.max(map.current.getZoom(), MIN_GRID_ZOOM + 1),
+			essential: true
+		});
+	}, [map, user, users]);
+
 	return (
 		<>
 			<Global
@@ -699,15 +1371,44 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					>
 						Clear Selection
 					</Button>
-					<Button
-						colorScheme="green"
-						size="sm"
-						onClick={handleSaveSelection}
+					{selectedCells.current.size > 0 ? (
+						<Button
+							colorScheme="green"
+							size="sm"
+							onClick={handleBuyProperty}
+							boxShadow="md"
+							isLoading={isLoading}
+							loadingText="Buying..."
+						>
+							Buy Property ({selectedCells.current.size * propertyPrice} tokens)
+						</Button>
+					) : (
+						<Button
+							colorScheme="yellow"
+							size="sm"
+							onClick={handleSaveSelection}
+							boxShadow="md"
+						>
+							Save Selection
+						</Button>
+					)}
+				</Box>
+
+				{/* Show user tokens */}
+				{user && users[user.uid] && (
+					<Box
+						position="absolute"
+						top="56px"
+						right="16px"
+						zIndex={1001}
+						bg="white"
+						p={2}
+						borderRadius="md"
 						boxShadow="md"
 					>
-						Save Selection
-					</Button>
-				</Box>
+						<Text fontWeight="bold">Tokens: {users[user.uid].tokens}</Text>
+					</Box>
+				)}
 
 				{/* Search Bar */}
 				<Box
