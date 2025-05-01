@@ -7,7 +7,12 @@ export interface Property {
 	id: string  // Changed from propertyId: number
 	owner: string
 	cells: string[]
-	price: number
+	price: number // Purchase price
+	name?: string 
+	description?: string
+	address?: string
+	forSale?: boolean
+	salePrice?: number
 }
 
 interface UserData {
@@ -28,6 +33,12 @@ interface UserStore {
 	deductToken: (uid: string, amount?: number) => Promise<void> // Added optional amount
 	addToken: (uid: string, amount: number) => Promise<void>
 	fetchUsers: () => Promise<void>
+	transferProperty: (
+		propertyId: string, 
+		fromUserId: string, 
+		toUserId: string, 
+		amount: number
+	) => Promise<boolean>
 }
 
 // Update API URL based on environment
@@ -264,6 +275,118 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			}));
 		} catch (error) {
 			console.error('Error adding tokens:', error);
+		}
+	},
+	transferProperty: async (
+		propertyId: string, 
+		fromUserId: string, 
+		toUserId: string, 
+		amount: number
+	) => {
+		try {
+			// First get data for both users
+			const fromUserResponse = await fetch(`${API_URL}/users?uid=${fromUserId}`);
+			const fromUsers = await fromUserResponse.json();
+			
+			const toUserResponse = await fetch(`${API_URL}/users?uid=${toUserId}`);
+			const toUsers = await toUserResponse.json();
+			
+			if (!fromUsers || fromUsers.length === 0 || !toUsers || toUsers.length === 0) {
+				console.error('One or both users not found');
+				return false;
+			}
+			
+			// Get the users
+			const fromUser = fromUsers[0];
+			const toUser = toUsers[0];
+			
+			// Get JSON Server IDs
+			const fromUserJSONId = fromUser.id;
+			const toUserJSONId = toUser.id;
+			
+			// Check if buyer has enough tokens
+			if (toUser.tokens < amount) {
+				console.error('Buyer has insufficient tokens');
+				return false;
+			}
+			
+			// Find the property in the seller's properties
+			const fromUserProperties = fromUser.properties || [];
+			const propertyIndex = fromUserProperties.findIndex((p: Property) => p.id === propertyId);
+			
+			if (propertyIndex === -1) {
+				console.error('Property not found in seller properties');
+				return false;
+			}
+			
+			// Get the property
+			const property = {...fromUserProperties[propertyIndex]};
+			
+			// Update property owner and remove forSale flag
+			property.owner = toUserId;
+			property.forSale = false;
+			
+			// Remove property from seller
+			const updatedFromProperties = [...fromUserProperties];
+			updatedFromProperties.splice(propertyIndex, 1);
+			
+			// Add property to buyer
+			const toUserProperties = toUser.properties || [];
+			const updatedToProperties = [...toUserProperties, property];
+			
+			// Update token balances
+			const fromUserNewTokens = fromUser.tokens + amount;
+			const toUserNewTokens = toUser.tokens - amount;
+			
+			// Update seller
+			const updateFromResponse = await fetch(`${API_URL}/users/${fromUserJSONId}`, {
+				method: 'PATCH',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					properties: updatedFromProperties,
+					tokens: fromUserNewTokens
+				}),
+			});
+			
+			if (!updateFromResponse.ok) {
+				throw new Error(`Error updating seller: ${updateFromResponse.status}`);
+			}
+			
+			// Update buyer
+			const updateToResponse = await fetch(`${API_URL}/users/${toUserJSONId}`, {
+				method: 'PATCH',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					properties: updatedToProperties,
+					tokens: toUserNewTokens
+				}),
+			});
+			
+			if (!updateToResponse.ok) {
+				throw new Error(`Error updating buyer: ${updateToResponse.status}`);
+			}
+			
+			// Get updated users
+			const updatedFromUser = await updateFromResponse.json();
+			const updatedToUser = await updateToResponse.json();
+			
+			// Update local state
+			set((state) => ({
+				users: {
+					...state.users,
+					[fromUserId]: updatedFromUser,
+					[toUserId]: updatedToUser,
+				},
+			}));
+			
+			return true;
+		} catch (error) {
+			console.error('Error transferring property:', error);
+			return false;
 		}
 	},
 }))

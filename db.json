@@ -118,8 +118,44 @@
       "uid": "58MgDgoyY2bYCzxJo1SEqz0PzBy1",
       "email": "bappyer@er.co",
       "name": "bappy",
-      "tokens": 10,
-      "properties": []
+      "tokens": 1,
+      "properties": [
+        {
+          "id": "c39c0c55-6375-4d9c-965d-88abfdbfb456",
+          "owner": "58MgDgoyY2bYCzxJo1SEqz0PzBy1",
+          "cells": [
+            "-740049,577492"
+          ],
+          "price": 1
+        },
+        {
+          "id": "7437d496-744f-4f31-a181-1a2e35aaca2e",
+          "owner": "58MgDgoyY2bYCzxJo1SEqz0PzBy1",
+          "cells": [
+            "-740068,577478",
+            "-740067,577478",
+            "-740066,577478",
+            "-740065,577478",
+            "-740064,577478",
+            "-740064,577477",
+            "-740064,577476",
+            "-740065,577476",
+            "-740066,577476",
+            "-740067,577476",
+            "-740068,577476",
+            "-740068,577477",
+            "-740067,577477",
+            "-740066,577477",
+            "-740065,577477"
+          ],
+          "price": 0,
+          "name": "bapy",
+          "description": "adsf",
+          "address": "adsfasfd",
+          "forSale": false,
+          "salePrice": 8
+        }
+      ]
     },
     {
       "id": "84a2",
@@ -142,30 +178,8 @@
       "uid": "Tmlg548X1GbJL8VGzxoaOC9InYU2",
       "email": "bappyasd@asd.co",
       "name": "User",
-      "tokens": 1000,
+      "tokens": 1008,
       "properties": [
-        {
-          "id": "7437d496-744f-4f31-a181-1a2e35aaca2e",
-          "owner": "Tmlg548X1GbJL8VGzxoaOC9InYU2",
-          "cells": [
-            "-740068,577478",
-            "-740067,577478",
-            "-740066,577478",
-            "-740065,577478",
-            "-740064,577478",
-            "-740064,577477",
-            "-740064,577476",
-            "-740065,577476",
-            "-740066,577476",
-            "-740067,577476",
-            "-740068,577476",
-            "-740068,577477",
-            "-740067,577477",
-            "-740066,577477",
-            "-740065,577477"
-          ],
-          "price": 0
-        },
         {
           "id": "ae3692e7-da07-4011-ad42-bf8237024ebf",
           "owner": "Tmlg548X1GbJL8VGzxoaOC9InYU2",
@@ -240,7 +254,12 @@
             "-740064,577484",
             "-740064,577483"
           ],
-          "price": 0
+          "price": 0,
+          "name": "My home",
+          "description": "this is test",
+          "address": "adfasdf",
+          "forSale": true,
+          "salePrice": 20
         },
         {
           "id": "7878c537-c465-414e-805f-457c0a30d2f8",

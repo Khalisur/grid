@@ -23,6 +23,26 @@ import {
 	FormControl,
 	FormLabel,
 	useToast,
+	Modal,
+	ModalOverlay,
+	ModalContent,
+	ModalHeader,
+	ModalFooter,
+	ModalBody,
+	ModalCloseButton,
+	Tabs, 
+	TabList, 
+	TabPanels, 
+	Tab, 
+	TabPanel,
+	NumberInput,
+	NumberInputField,
+	NumberInputStepper,
+	NumberIncrementStepper,
+	NumberDecrementStepper,
+	Textarea,
+	Badge,
+	Flex
 } from '@chakra-ui/react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
@@ -82,13 +102,23 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	const selectedCells = useRef<Set<string>>(new Set())
 	const isSelectionMode = useRef(false)
 	const { user } = useAuthStore()
-	const { users, updateUserProperty, deductToken, fetchUsers } =
+	const { users, updateUserProperty, deductToken, fetchUsers, transferProperty } =
 		useUserStore()
 	const [currentPropertyId, setCurrentPropertyId] = useState<string>('')
 	const [propertyPrice, setPropertyPrice] = useState<number>(1) // Default price per cell
 	const toast = useToast()
 	const [isLoading, setIsLoading] = useState(false)
 	const [propertiesLoaded, setPropertiesLoaded] = useState(false)
+	
+	// Property modal state
+	const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false)
+	const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
+	const [propertyName, setPropertyName] = useState('')
+	const [propertyDescription, setPropertyDescription] = useState('')
+	const [propertyAddress, setPropertyAddress] = useState('')
+	const [propertyForSale, setPropertyForSale] = useState(false)
+	const [propertySalePrice, setPropertySalePrice] = useState(0)
+	const [isOwnProperty, setIsOwnProperty] = useState(false)
 
 	// Get map settings from store
 	const { currentStyle, gridColor, selectionColor } = useMapStore()
@@ -611,8 +641,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 	// Function to handle property click
 	const handlePropertyClick = useCallback((e: mapboxgl.MapMouseEvent) => {
-		if (!map.current || !user) {
-			console.log('Property click handler called but map or user not available');
+		if (!map.current) {
+			console.log('Property click handler called but map not available');
 			return;
 		}
 		
@@ -633,13 +663,55 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const propertyFeature = propertyFeatures[0];
 			const propertyId = propertyFeature.properties?.id;
 			const propertyOwner = propertyFeature.properties?.owner;
-			const isOwnProperty = propertyOwner === user.uid;
+			const isOwnProperty = user && propertyOwner === user.uid;
+			const forSale = propertyFeature.properties?.forSale;
 			
 			console.log('Clicked on property:', propertyFeature.properties);
 			
+			// Find property data in user properties
+			let propertyData: Property | null = null;
+			let ownerData = null;
+			
+			// Look for the owner in users
+			if (users) {
+				for (const userData of Object.values(users)) {
+					if (!userData.properties) continue;
+					
+					const foundProperty = userData.properties.find(p => p.id === propertyId);
+					if (foundProperty) {
+						propertyData = foundProperty;
+						ownerData = userData;
+						break;
+					}
+				}
+			}
+			
+			if (!propertyData) {
+				toast({
+					title: 'Error',
+					description: 'Could not find property data',
+					status: 'error',
+					duration: 2000,
+					isClosable: true,
+				});
+				return;
+			}
+			
+			// Set property data for modal
+			setSelectedProperty(propertyData);
+			setPropertyName(propertyData.name || '');
+			setPropertyDescription(propertyData.description || '');
+			setPropertyAddress(propertyData.address || '');
+			setPropertyForSale(!!propertyData.forSale);
+			setPropertySalePrice(propertyData.salePrice || 0);
+			setIsOwnProperty(!!isOwnProperty);
+			
+			// Open modal
+			setIsPropertyModalOpen(true);
+			
 			if (isOwnProperty) {
 				// Find the property in user data
-				const userData = users[user.uid];
+				const userData = users?.[user?.uid || ''];
 				if (!userData) {
 					console.warn('User data not found for current user');
 					return;
@@ -664,28 +736,136 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				
 				// Update selection display
 				updateSelection();
-				
-				toast({
-					title: 'Property Selected',
-					description: `Selected your property with ${property.cells.length} cells`,
-					status: 'info',
-					duration: 2000,
-					isClosable: true,
-				});
-			} else {
-				// Show info about other user's property
-				toast({
-					title: 'Property Info',
-					description: `This property belongs to another user and has ${propertyFeature.properties?.cellCount} cells`,
-					status: 'info',
-					duration: 2000,
-					isClosable: true,
-				});
 			}
 		} else {
 			console.log('No property features found at click location');
 		}
 	}, [user, users, toast, updateSelection]);
+
+	// Function to handle save property details
+	const handleSavePropertyDetails = async () => {
+		if (!selectedProperty || !user) return;
+		
+		try {
+			setIsLoading(true);
+			
+			// Update property details
+			const updatedProperty: Property = {
+				...selectedProperty,
+				name: propertyName,
+				description: propertyDescription,
+				address: propertyAddress,
+				forSale: propertyForSale,
+				salePrice: propertySalePrice
+			};
+			
+			// Save to database
+			await updateUserProperty(user.uid, updatedProperty);
+			
+			toast({
+				title: 'Success',
+				description: 'Property details updated successfully',
+				status: 'success',
+				duration: 2000,
+				isClosable: true,
+			});
+			
+			// Close modal
+			setIsPropertyModalOpen(false);
+			
+			// Refresh properties
+			await fetchUsers();
+			loadProperties();
+		} catch (error) {
+			console.error('Error saving property details:', error);
+			toast({
+				title: 'Error',
+				description: 'Failed to update property details',
+				status: 'error',
+				duration: 2000,
+				isClosable: true,
+			});
+		} finally {
+			setIsLoading(false);
+		}
+	};
+	
+	// Function to handle property purchase
+	const handleBuyListedProperty = async () => {
+		if (!selectedProperty || !user) return;
+		
+		try {
+			setIsLoading(true);
+			
+			// Check user tokens
+			const userData = users[user.uid];
+			if (!userData) {
+				toast({
+					title: 'Error',
+					description: 'User data not found',
+					status: 'error',
+					duration: 2000,
+					isClosable: true,
+				});
+				return;
+			}
+			
+			if (userData.tokens < (selectedProperty.salePrice || 0)) {
+				toast({
+					title: 'Insufficient Tokens',
+					description: `You need ${selectedProperty.salePrice} tokens to buy this property`,
+					status: 'error',
+					duration: 2000,
+					isClosable: true,
+				});
+				return;
+			}
+			
+			// Transfer property
+			const success = await transferProperty(
+				selectedProperty.id,
+				selectedProperty.owner,
+				user.uid,
+				selectedProperty.salePrice || 0
+			);
+			
+			if (success) {
+				toast({
+					title: 'Success',
+					description: 'Property purchased successfully',
+					status: 'success',
+					duration: 2000,
+					isClosable: true,
+				});
+				
+				// Close modal
+				setIsPropertyModalOpen(false);
+				
+				// Refresh properties
+				await fetchUsers();
+				loadProperties();
+			} else {
+				toast({
+					title: 'Error',
+					description: 'Failed to purchase property',
+					status: 'error',
+					duration: 2000,
+					isClosable: true,
+				});
+			}
+		} catch (error) {
+			console.error('Error purchasing property:', error);
+			toast({
+				title: 'Error',
+				description: 'An error occurred during purchase',
+				status: 'error',
+				duration: 2000,
+				isClosable: true,
+			});
+		} finally {
+			setIsLoading(false);
+		}
+	};
 
 	// Function to handle mouse down for selection
 	const handleMouseDown = useCallback((e: mapboxgl.MapMouseEvent) => {
@@ -1047,7 +1227,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								price: property.price,
 								cellCount: property.cells.length,
 								isOwnProperty: user && property.owner === user.uid,
-								cellKey: cellKey
+								cellKey: cellKey,
+								forSale: property.forSale || false,
+								salePrice: property.salePrice || 0,
+								name: property.name || '',
+								description: property.description || '',
+								address: property.address || ''
 							},
 							geometry: {
 								type: 'Polygon',
@@ -1101,12 +1286,16 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							'case',
 							['==', ['get', 'isOwnProperty'], true],
 							'#4CAF50', // Green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FFC107', // Yellow for properties for sale
 							'#F44336'  // Red for other properties
 						],
 						'fill-outline-color': [
 							'case',
 							['==', ['get', 'isOwnProperty'], true],
 							'#2E7D32', // Darker green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FF8F00', // Darker yellow for properties for sale
 							'#B71C1C'  // Darker red for other properties
 						]
 					}
@@ -1122,6 +1311,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							'case',
 							['==', ['get', 'isOwnProperty'], true],
 							'#2E7D32', // Darker green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FF8F00', // Darker yellow for properties for sale
 							'#B71C1C'  // Darker red for other properties
 						],
 						'line-width': 2,
@@ -1433,15 +1624,15 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						Clear Selection
 					</Button>
 					<Button
-							colorScheme="green"
-							size="sm"
-							onClick={handleBuyProperty}
-							boxShadow="md"
-							isLoading={isLoading}
-							loadingText="Buying..."
-						>
-							Buy Property
-						</Button>
+						colorScheme="green"
+						size="sm"
+						onClick={handleBuyProperty}
+						boxShadow="md"
+						isLoading={isLoading}
+						loadingText="Buying..."
+					>
+						Buy Property ({selectedCells.current.size * propertyPrice} tokens)
+					</Button>
 				</Box>
 
 				{/* Show user tokens */}
@@ -1459,6 +1650,162 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						<Text fontWeight="bold" color="gray.800">Tokens: {users[user.uid].tokens}</Text>
 					</Box>
 				)}
+
+				{/* Map Legend */}
+				<Box
+					position="absolute"
+					bottom="20px"
+					right="16px"
+					zIndex={1001}
+					bg="white"
+					p={3}
+					borderRadius="md"
+					boxShadow="md"
+				>
+					<Text fontWeight="bold" mb={2} color="gray.800">Property Legend</Text>
+					<Flex align="center" mb={1}>
+						<Box width="20px" height="20px" bg="#4CAF50" mr={2} borderRadius="sm" />
+						<Text fontSize="sm" color="gray.800">Your Properties</Text>
+					</Flex>
+					<Flex align="center" mb={1}>
+						<Box width="20px" height="20px" bg="#FFC107" mr={2} borderRadius="sm" />
+						<Text fontSize="sm" color="gray.800">Properties For Sale</Text>
+					</Flex>
+					<Flex align="center">
+						<Box width="20px" height="20px" bg="#F44336" mr={2} borderRadius="sm" />
+						<Text fontSize="sm" color="gray.800">Other Properties</Text>
+					</Flex>
+				</Box>
+
+				{/* Property Details Modal */}
+				<Modal isOpen={isPropertyModalOpen} onClose={() => setIsPropertyModalOpen(false)} size="lg">
+					<ModalOverlay />
+					<ModalContent>
+						<ModalHeader>
+							{isOwnProperty ? 'Your Property Details' : 'Property For Sale'}
+							{selectedProperty?.forSale && (
+								<Badge colorScheme="green" ml={2}>For Sale</Badge>
+							)}
+						</ModalHeader>
+						<ModalCloseButton />
+						<ModalBody>
+							<Tabs>
+								<TabList>
+									<Tab>Details</Tab>
+									{isOwnProperty && <Tab>Sell Property</Tab>}
+								</TabList>
+								<TabPanels>
+									<TabPanel>
+										{isOwnProperty ? (
+											<>
+												<FormControl mb={4}>
+													<FormLabel>Property Name</FormLabel>
+													<Input 
+														value={propertyName} 
+														onChange={(e) => setPropertyName(e.target.value)}
+														placeholder="Enter property name"
+													/>
+												</FormControl>
+												
+												<FormControl mb={4}>
+													<FormLabel>Description</FormLabel>
+													<Textarea 
+														value={propertyDescription} 
+														onChange={(e) => setPropertyDescription(e.target.value)}
+														placeholder="Describe your property"
+													/>
+												</FormControl>
+												
+												<FormControl mb={4}>
+													<FormLabel>Address</FormLabel>
+													<Input 
+														value={propertyAddress} 
+														onChange={(e) => setPropertyAddress(e.target.value)}
+														placeholder="Enter property address"
+													/>
+												</FormControl>
+												
+												<Text>Property Size: {selectedProperty?.cells.length || 0} cells</Text>
+												<Text mt={2}>Original Cost: {selectedProperty?.price || 0} tokens</Text>
+											</>
+										) : (
+											<>
+												<Text fontWeight="bold" fontSize="xl">{propertyName || 'Unnamed Property'}</Text>
+												{propertyDescription && (
+													<Text mt={2}>{propertyDescription}</Text>
+												)}
+												{propertyAddress && (
+													<Text mt={2}><strong>Address:</strong> {propertyAddress}</Text>
+												)}
+												<Text mt={4}>Property Size: {selectedProperty?.cells.length || 0} cells</Text>
+												{selectedProperty?.forSale && (
+													<>
+														<Text mt={2} fontSize="xl" fontWeight="bold" color="green.500">
+															Price: {selectedProperty.salePrice} tokens
+														</Text>
+														<Button 
+															mt={4} 
+															colorScheme="green" 
+															width="100%"
+															onClick={handleBuyListedProperty}
+															isLoading={isLoading}
+														>
+															Buy This Property
+														</Button>
+													</>
+												)}
+											</>
+										)}
+									</TabPanel>
+									
+									{isOwnProperty && (
+										<TabPanel>
+											<FormControl mb={4}>
+												<FormLabel>List For Sale</FormLabel>
+												<input 
+													type="checkbox" 
+													checked={propertyForSale}
+													onChange={(e) => setPropertyForSale(e.target.checked)}
+												/>
+											</FormControl>
+											
+											{propertyForSale && (
+												<FormControl mb={4}>
+													<FormLabel>Sale Price (tokens)</FormLabel>
+													<NumberInput
+														value={propertySalePrice}
+														onChange={(value) => setPropertySalePrice(Number(value))}
+														min={1}
+													>
+														<NumberInputField />
+														<NumberInputStepper>
+															<NumberIncrementStepper />
+															<NumberDecrementStepper />
+														</NumberInputStepper>
+													</NumberInput>
+												</FormControl>
+											)}
+										</TabPanel>
+									)}
+								</TabPanels>
+							</Tabs>
+						</ModalBody>
+						<ModalFooter>
+							<Button variant="ghost" mr={3} onClick={() => setIsPropertyModalOpen(false)}>
+								Cancel
+							</Button>
+							{isOwnProperty && (
+								<Button 
+									colorScheme="blue" 
+									onClick={handleSavePropertyDetails}
+									isLoading={isLoading}
+								>
+									Save
+								</Button>
+							)}
+						</ModalFooter>
+					</ModalContent>
+				</Modal>
 
 				{/* Search Bar */}
 				<Box
