@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "id": "1",
+      "uid": "user1",
+      "email": "user1@example.com",
+      "name": "User One",
+      "tokens": 10,
+      "properties": []
+    },
+    {
+      "id": "2",
+      "uid": "user2",
+      "email": "user2@example.com",
+      "name": "User Two",
+      "tokens": 10,
+      "properties": []
+    },
+    {
+      "id": "9651",
+      "uid": "UCC9iRmvjIPFPPcuOkZgj5ldCoo2",
+      "email": "basdppy11ssww@test.co",
+      "name": "adfa",
+      "tokens": 10,
+      "properties": []
+    }
+  ]
+}
