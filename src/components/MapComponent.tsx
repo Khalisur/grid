@@ -1406,7 +1406,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						borderRadius="md"
 						boxShadow="md"
 					>
-						<Text fontWeight="bold">Tokens: {users[user.uid].tokens}</Text>
+						<Text fontWeight="bold" color="gray.800">Tokens: {users[user.uid].tokens}</Text>
 					</Box>
 				)}
 
