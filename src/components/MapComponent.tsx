@@ -77,8 +77,11 @@ const GRID_SIZE_LAT = 0.0000705 // Adjusted to make cells appear as squares
 const MIN_GRID_ZOOM = 17 // Minimum zoom level for grid visibility
 const MAX_GRID_ZOOM = 30 // Maximum zoom level for grid visibility
 
+// Define a custom options type that omits the 'container' property
+type MapInitialOptions = Omit<mapboxgl.MapboxOptions, 'container'>;
+
 interface MapComponentProps {
-	initialOptions?: string[]
+	initialOptions?: MapInitialOptions
 	children?: ReactNode
 }
 
