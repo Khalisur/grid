@@ -58,6 +58,9 @@ import { Property } from '../stores/userStore'
 mapboxgl.accessToken =
 	'pk.eyJ1IjoiYmNucHJvMjAiLCJhIjoiY205cmVvZXhrMXB6dTJqb2I4cHFxN2xnbiJ9.HOKvHjSyBLNkwiaiEoFnBg'
 
+// API URL from environment variables
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+
 // Grid layer IDs
 const GRID_SOURCE_ID = 'grid-source'
 const GRID_LAYER_ID = 'grid-layer'
@@ -131,122 +134,174 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		currentSelectionColor.current = selectionColor
 	}, [selectionColor])
 
-	// Add a ref for the users data to avoid re-renders
-	const usersRef = useRef(users);
+	// Add a loading ref to track API call status
+	const isLoadingUsers = useRef(false)
 
-	// Update usersRef when users changes
-	useEffect(() => {
-		usersRef.current = users;
-	}, [users]);
-
-	// Function to check if a cell is already owned by any user
-	const isCellAlreadyOwned = useCallback((cellKey: string): boolean => {
-		const currentUsers = usersRef.current;
-		if (!currentUsers || Object.keys(currentUsers).length === 0) return false;
-		
-		// Check all users and their properties
-		for (const userData of Object.values(currentUsers)) {
-			if (!userData.properties || userData.properties.length === 0) continue;
-			
-			for (const property of userData.properties) {
-				if (!property.cells || property.cells.length === 0) continue;
-				
-				// Check if this cell is in the property
-				if (property.cells.includes(cellKey)) {
-					return true;
-				}
-			}
-		}
-		
-		return false;
-	}, []); // No dependency on users
-
-	useEffect(() => {
-		fetchUsers()
-	}, [fetchUsers])
-
-	// Add this useEffect to ensure user profile exists with improved debugging
+	// Update the useEffect for ensureUserProfile to avoid repeated API calls
 	useEffect(() => {
 		// If user is authenticated but profile not found, create it
 		const ensureUserProfile = async () => {
-			if (!user) return;
+			if (!user || isLoadingUsers.current) return
 			
 			// First check if user exists in local state
 			if (users && users[user.uid]) {
-				console.log('User already in local state, no need to create profile');
-				return;
+				console.log('User already in local state, no need to create profile')
+				return
 			}
 			
 			try {
-				console.log('User authenticated but profile not found in local state, checking API...');
-				console.log('Current user:', user);
+				isLoadingUsers.current = true
+				console.log('User authenticated but profile not found in local state, checking API...')
+				console.log('Current user:', user)
 				
 				// Check if the user already exists in the API but not in our local state
-				const checkResponse = await fetch(`http://localhost:3001/users?uid=${user.uid}`);
-				const existingUsers = await checkResponse.json();
+				const checkResponse = await fetch(`${API_URL}/users/profile`, {
+					headers: {
+						'Firebase-UID': user.uid
+					}
+				})
 				
-				if (existingUsers && existingUsers.length > 0) {
-					console.log('User exists in API but not in local state, refreshing users...');
-					console.log('Existing user found:', existingUsers[0]);
-					await fetchUsers();
-				} else {
-					console.log('User does not exist in API, creating new user profile...');
+				if (checkResponse.ok) {
+					// User exists in API
+					console.log('User exists in API but not in local state, refreshing users...')
+					const userData = await checkResponse.json()
+					console.log('Existing user found:', userData)
+					await fetchUsers()
+				} else if (checkResponse.status === 404 || checkResponse.status === 401) {
+					console.log('User does not exist in API, creating new user profile...')
 					
-					// Use the store's addUser method
-					const addUserFn = useUserStore.getState().addUser;
-					await addUserFn({
-						uid: user.uid,
-						email: user.email || 'unknown@example.com',
-						name: user.displayName || 'User'
-					});
+					// Create new user with the POST create user endpoint
+					const createResponse = await fetch(`${API_URL}/users/create`, {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json'
+						},
+						body: JSON.stringify({
+							uid: user.uid,
+							email: user.email || 'unknown@example.com',
+							name: user.displayName || 'User'
+						})
+					})
 					
-					// Refresh users list
-					await fetchUsers();
-					
-					toast({
-						title: 'Profile Created',
-						description: 'Welcome! Your profile has been created with 10 starter tokens.',
-						status: 'success',
-						duration: 5000,
-						isClosable: true,
-					});
+					if (createResponse.ok) {
+						await fetchUsers()
+						
+						toast({
+							title: 'Profile Created',
+							description: 'Welcome! Your profile has been created with starter tokens.',
+							status: 'success',
+							duration: 5000,
+							isClosable: true,
+						})
+					} else {
+						throw new Error('Failed to create user profile')
+					}
 				}
 			} catch (error) {
-				console.error('Failed to create user profile:', error);
+				console.error('Failed to create user profile:', error)
 				toast({
 					title: 'Error',
 					description: 'Failed to create user profile. Please check console for details.',
 					status: 'error',
 					duration: 5000,
 					isClosable: true,
-				});
+				})
+			} finally {
+				isLoadingUsers.current = false
 			}
-		};
+		}
 
 		// Run when user is available
 		if (user) {
-			ensureUserProfile();
+			ensureUserProfile()
 		}
-	}, [user, users, fetchUsers, toast]);
+	}, [user, fetchUsers, toast])
+
+	// Store current users in a ref to avoid re-renders
+	const usersRef = useRef(users)
+	useEffect(() => {
+		usersRef.current = users
+	}, [users])
+
+	// Function to check if a cell is already owned by any user
+	const isCellAlreadyOwned = useCallback((cellKey: string): boolean => {
+		const currentUsers = usersRef.current
+		if (!currentUsers || Object.keys(currentUsers).length === 0) return false
+		
+		// Check all users and their properties
+		for (const userData of Object.values(currentUsers)) {
+			if (!userData.properties || userData.properties.length === 0) continue
+			
+			for (const property of userData.properties) {
+				if (!property.cells || property.cells.length === 0) continue
+				
+				// Check if this cell is in the property
+				if (property.cells.includes(cellKey)) {
+					return true
+				}
+			}
+		}
+		
+		return false
+	}, [])
+
+	useEffect(() => {
+		fetchUsers()
+	}, [fetchUsers])
 
 	// Debug function to inspect users data structure
 	useEffect(() => {
 		if (users && Object.keys(users).length > 0) {
-			console.log('=== DEBUG: USERS DATA STRUCTURE ===');
+			console.log('=== DEBUG: USERS DATA STRUCTURE ===')
 			Object.entries(users).forEach(([uid, userData]) => {
-				console.log(`User ${userData.name} (${uid}):`);
-				console.log('  Properties:', userData.properties || 'None');
+				console.log(`User ${userData.name} (${uid}):`)
+				console.log('  Properties:', userData.properties || 'None')
 				if (userData.properties) {
 					userData.properties.forEach((prop, i) => {
-						console.log(`  Property ${i + 1}:`, prop);
-						console.log(`    ID: ${prop.id}`);
-						console.log(`    Cells: ${prop.cells.length} cells`);
-						console.log(`    Sample cells:`, prop.cells.slice(0, 2));
-					});
+						console.log(`  Property ${i + 1}:`, prop)
+						console.log(`    ID: ${prop.id}`)
+						console.log(`    Cells: ${prop.cells.length} cells`)
+						console.log(`    Sample cells:`, prop.cells.slice(0, 2))
+					})
 				}
-			});
+			})
 		}
-	}, [users]);
+	}, [users])
+
+	// Define flyToProperty function here, before it's used
+	const flyToProperty = useCallback((propertyId: string): void => {
+		if (!map.current || !user || !usersRef.current[user.uid]) return
+		
+		const userProperties = usersRef.current[user.uid].properties || []
+		const property = userProperties.find(p => p.id === propertyId)
+		
+		if (!property || !property.cells || property.cells.length === 0) {
+			console.warn('Cannot fly to property: property not found or has no cells')
+			return
+		}
+		
+		// Get the first cell to determine location
+		const firstCell = property.cells[0]
+		const parts = firstCell.split(',')
+		if (parts.length !== 2) return
+		
+		const lngIndex = parseInt(parts[0], 10)
+		const latIndex = parseInt(parts[1], 10)
+		
+		if (isNaN(lngIndex) || isNaN(latIndex)) return
+		
+		const lng = lngIndex * GRID_SIZE
+		const lat = latIndex * GRID_SIZE_LAT
+		
+		console.log(`Flying to property location: ${lng}, ${lat}`)
+		
+		// Fly to the property location and zoom in enough to see it
+		map.current.flyTo({
+			center: [lng, lat],
+			zoom: Math.max(map.current.getZoom(), MIN_GRID_ZOOM + 1),
+			essential: true
+		})
+	}, [map, user, usersRef])
 
 	// Function to handle save selection
 	const handleSaveSelection = async () => {
@@ -273,61 +328,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 
 		// Ensure users data is loaded
-		if (!users || Object.keys(users).length === 0) {
-			await fetchUsers();
-		}
-
-		// Check for user profile
-		let userProfile = users[user.uid];
-		
-		// If user not found in local state, check API
-		if (!userProfile) {
-			console.log('User not found in local state, checking API...');
-			
-			try {
-				// Check if user exists in database but isn't loaded
-				const response = await fetch(`http://localhost:3001/users?uid=${user.uid}`);
-				const existingUsers = await response.json();
-				
-				if (existingUsers && existingUsers.length > 0) {
-					// User exists in database but wasn't in our state
-					console.log('User found in database, loading...');
-					await fetchUsers();
-					userProfile = users[user.uid]; // Update reference after fetching
-				} else {
-					// User doesn't exist in database at all
-					console.log('Creating new user profile...');
-					// Create user via store function (which has duplicate checking)
-					await useUserStore.getState().addUser({
-						uid: user.uid,
-						email: user.email || 'unknown@example.com',
-						name: user.displayName || 'User'
-					});
-					await fetchUsers();
-					userProfile = users[user.uid]; // Update reference after fetching
-				}
-				
-				if (!userProfile) {
-					toast({
-						title: 'Error',
-						description: 'Failed to retrieve or create user profile',
-						status: 'error',
-						duration: 3000,
-						isClosable: true,
-					});
-					return;
-				}
-			} catch (error) {
-				console.error('Error handling user profile:', error);
-				toast({
-					title: 'Error',
-					description: 'Error while checking user profile',
-					status: 'error',
-					duration: 3000,
-					isClosable: true,
-				});
-				return;
-			}
+		if (!usersRef.current || Object.keys(usersRef.current).length === 0) {
+			await fetchUsers()
 		}
 
 		try {
@@ -342,10 +344,21 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				price: 0, // Saved selections are free
 			}
 			
-			console.log('Saving property with data:', propertyData);
+			console.log('Saving property with data:', propertyData)
 			
-			// Save property to user's properties
-			await updateUserProperty(user.uid, propertyData)
+			// Save property to user's properties using the new API endpoint
+			const propertyResponse = await fetch(`${API_URL}/properties`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Firebase-UID': user.uid
+				},
+				body: JSON.stringify(propertyData)
+			})
+			
+			if (!propertyResponse.ok) {
+				throw new Error('Failed to create property')
+			}
 			
 			toast({
 				title: 'Success',
@@ -365,15 +378,15 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Force property reload with a small delay
 			setTimeout(() => {
-				console.log('Reloading properties after save');
-				loadProperties();
-			}, 500);
+				console.log('Reloading properties after save')
+				loadProperties()
+			}, 500)
 
 			// Add this inside the try block of handleSaveSelection after the setTimeout
 			setTimeout(() => {
-				console.log('Flying to newly saved property');
-				flyToProperty(propertyId);
-			}, 1000);
+				console.log('Flying to newly saved property')
+				flyToProperty(propertyId)
+			}, 1000)
 		} catch (error) {
 			toast({
 				title: 'Error',
@@ -382,7 +395,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				duration: 3000,
 				isClosable: true,
 			})
-			console.error('Save selection error:', error);
+			console.error('Save selection error:', error)
 		}
 	}
 
@@ -642,46 +655,46 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Function to handle property click
 	const handlePropertyClick = useCallback((e: mapboxgl.MapMouseEvent) => {
 		if (!map.current) {
-			console.log('Property click handler called but map not available');
-			return;
+			console.log('Property click handler called but map not available')
+			return
 		}
 		
-		console.log('Property click event at:', e.lngLat);
+		console.log('Property click event at:', e.lngLat)
 		
 		// Query all features at the clicked point
-		const features = map.current.queryRenderedFeatures(e.point);
-		console.log('All features at click point:', features.length);
+		const features = map.current.queryRenderedFeatures(e.point)
+		console.log('All features at click point:', features.length)
 		
 		// Filter to just properties layer
 		const propertyFeatures = map.current.queryRenderedFeatures(e.point, {
 			layers: [PROPERTIES_LAYER_ID]
-		});
+		})
 		
-		console.log('Property features found:', propertyFeatures.length);
+		console.log('Property features found:', propertyFeatures.length)
 		
 		if (propertyFeatures.length > 0) {
-			const propertyFeature = propertyFeatures[0];
-			const propertyId = propertyFeature.properties?.id;
-			const propertyOwner = propertyFeature.properties?.owner;
-			const isOwnProperty = user && propertyOwner === user.uid;
-			const forSale = propertyFeature.properties?.forSale;
+			const propertyFeature = propertyFeatures[0]
+			const propertyId = propertyFeature.properties?.id
+			const propertyOwner = propertyFeature.properties?.owner
+			const isOwnProperty = user && propertyOwner === user.uid
+			const forSale = propertyFeature.properties?.forSale
 			
-			console.log('Clicked on property:', propertyFeature.properties);
+			console.log('Clicked on property:', propertyFeature.properties)
 			
 			// Find property data in user properties
-			let propertyData: Property | null = null;
-			let ownerData = null;
+			let propertyData: Property | null = null
+			let ownerData = null
 			
 			// Look for the owner in users
-			if (users) {
-				for (const userData of Object.values(users)) {
-					if (!userData.properties) continue;
+			if (usersRef.current) {
+				for (const userData of Object.values(usersRef.current)) {
+					if (!userData.properties) continue
 					
-					const foundProperty = userData.properties.find(p => p.id === propertyId);
+					const foundProperty = userData.properties.find(p => p.id === propertyId)
 					if (foundProperty) {
-						propertyData = foundProperty;
-						ownerData = userData;
-						break;
+						propertyData = foundProperty
+						ownerData = userData
+						break
 					}
 				}
 			}
@@ -693,113 +706,113 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				// 	status: 'error',
 				// 	duration: 2000,
 				// 	isClosable: true,
-				// });
-				return;
+				// })
+				return
 			}
 			
 			// Set property data for modal
-			setSelectedProperty(propertyData);
-			setPropertyName(propertyData.name || '');
-			setPropertyDescription(propertyData.description || '');
-			setPropertyAddress(propertyData.address || '');
-			setPropertyForSale(!!propertyData.forSale);
-			setPropertySalePrice(propertyData.salePrice || 0);
-			setIsOwnProperty(!!isOwnProperty);
+			setSelectedProperty(propertyData)
+			setPropertyName(propertyData.name || '')
+			setPropertyDescription(propertyData.description || '')
+			setPropertyAddress(propertyData.address || '')
+			setPropertyForSale(!!propertyData.forSale)
+			setPropertySalePrice(propertyData.salePrice || 0)
+			setIsOwnProperty(!!isOwnProperty)
 			
 			// Open modal
-			setIsPropertyModalOpen(true);
+			setIsPropertyModalOpen(true)
 			
 			if (isOwnProperty) {
 				// Find the property in user data
-				const userData = users?.[user?.uid || ''];
+				const userData = usersRef.current[user?.uid || '']
 				if (!userData) {
-					console.warn('User data not found for current user');
-					return;
+					console.warn('User data not found for current user')
+					return
 				}
 				
-				const property = userData.properties.find(p => p.id === propertyId);
+				const property = userData.properties.find(p => p.id === propertyId)
 				if (!property) {
-					console.warn('Property not found in user data:', propertyId);
-					return;
+					console.warn('Property not found in user data:', propertyId)
+					return
 				}
 				
 				// Select all cells in this property
-				console.log(`Selecting ${property.cells.length} cells from property ${propertyId}`);
+				console.log(`Selecting ${property.cells.length} cells from property ${propertyId}`)
 				
 				// Clear current selection
-				selectedCells.current.clear();
+				selectedCells.current.clear()
 				
 				// Add all property cells to selection
 				property.cells.forEach(cellKey => {
-					selectedCells.current.add(cellKey);
-				});
+					selectedCells.current.add(cellKey)
+				})
 				
 				// Update selection display
-				updateSelection();
+				updateSelection()
 			}
 		} else {
-			console.log('No property features found at click location');
+			console.log('No property features found at click location')
 		}
-	}, [user, users, toast, updateSelection]);
+	}, [user, usersRef, toast, updateSelection])
 
 	// Function to load user properties on the map
 	const loadProperties = useCallback(() => {
-		if (!map.current || !map.current.isStyleLoaded() || !users || Object.keys(users).length === 0) {
-			console.warn('Cannot load properties: Map not ready or users data not available');
-			return;
+		if (!map.current || !map.current.isStyleLoaded() || !usersRef.current || Object.keys(usersRef.current).length === 0) {
+			console.warn('Cannot load properties: Map not ready or users data not available')
+			return
 		}
 
-		console.log('Starting property loading process...');
-		console.log('Users data available:', Object.keys(users).length, 'users');
+		console.log('Starting property loading process...')
+		console.log('Users data available:', Object.keys(usersRef.current).length, 'users')
 		
 		if (user) {
-			console.log('Current user uid:', user.uid);
-			console.log('All users:', users);
-			if (users[user.uid]) {
-				console.log('Current user data:', users[user.uid]);
-				console.log('Current user properties count:', users[user.uid]?.properties?.length || 0);
+			console.log('Current user uid:', user.uid)
+			console.log('All users:', usersRef.current)
+			if (usersRef.current[user.uid]) {
+				console.log('Current user data:', usersRef.current[user.uid])
+				console.log('Current user properties count:', usersRef.current[user.uid]?.properties?.length || 0)
 			} else {
-				console.warn('Current user data not found in users object!');
+				console.warn('Current user data not found in users object!')
 			}
 		}
 
 		// Create features for all properties
-		const allFeatures: GeoJSON.Feature[] = [];
+		const allFeatures: GeoJSON.Feature[] = []
 		
 		// Process all users and their properties
-		Object.values(users).forEach(userData => {
-			if (!userData.properties || userData.properties.length === 0) return;
+		Object.values(usersRef.current).forEach(userData => {
+			if (!userData.properties || userData.properties.length === 0) return
 			
-			console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`);
+			console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`)
 			
 			userData.properties.forEach(property => {
 				// Skip empty properties
 				if (!property.cells || property.cells.length === 0) {
-					console.warn('Skipping property with no cells:', property.id);
-					return;
+					console.warn('Skipping property with no cells:', property.id)
+					return
 				}
 				
-				console.log(`Processing property ${property.id} with ${property.cells.length} cells`);
+				console.log(`Processing property ${property.id} with ${property.cells.length} cells`)
 				
 				// Instead of creating a MultiPolygon, create individual Polygon features for each cell
 				property.cells.forEach(cellKey => {
 					try {
-						const parts = cellKey.split(',');
+						const parts = cellKey.split(',')
 						if (parts.length !== 2) {
-							console.warn('Invalid cell key format:', cellKey);
-							return;
+							console.warn('Invalid cell key format:', cellKey)
+							return
 						}
 						
-						const lngIndex = parseInt(parts[0], 10);
-						const latIndex = parseInt(parts[1], 10);
+						const lngIndex = parseInt(parts[0], 10)
+						const latIndex = parseInt(parts[1], 10)
 						
 						if (isNaN(lngIndex) || isNaN(latIndex)) {
-							console.warn('Invalid cell coordinates:', cellKey);
-							return;
+							console.warn('Invalid cell coordinates:', cellKey)
+							return
 						}
 						
-						const lng = lngIndex * GRID_SIZE;
-						const lat = latIndex * GRID_SIZE_LAT;
+						const lng = lngIndex * GRID_SIZE
+						const lat = latIndex * GRID_SIZE_LAT
 						
 						// Create a polygon for this cell
 						const cellPolygon: GeoJSON.Position[][] = [[
@@ -808,7 +821,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							[lng + GRID_SIZE, lat + GRID_SIZE_LAT],
 							[lng, lat + GRID_SIZE_LAT],
 							[lng, lat]
-						]];
+						]]
 						
 						// Create a feature for this cell
 						const cellFeature: GeoJSON.Feature = {
@@ -830,34 +843,33 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								type: 'Polygon',
 								coordinates: cellPolygon
 							}
-						};
+						}
 						
-						allFeatures.push(cellFeature);
+						allFeatures.push(cellFeature)
 					} catch (err) {
-						console.error('Error processing cell:', cellKey, err);
+						console.error('Error processing cell:', cellKey, err)
 					}
-				});
-			});
-		});
+				})
+			})
+		})
 		
-		console.log(`Loaded ${allFeatures.length} total property cells`);
+		console.log(`Loaded ${allFeatures.length} total property cells`)
 		
 		try {
 			// Check if the map is still valid
 			if (!map.current || !map.current.isStyleLoaded()) {
-				console.warn('Map no longer valid when trying to add property features');
-				return;
+				console.warn('Map no longer valid when trying to add property features')
+				return
 			}
 			
 			// Add or update sources
 			if (map.current.getSource(PROPERTIES_SOURCE_ID)) {
-				console.log('Updating existing properties source with new data');
 				(map.current.getSource(PROPERTIES_SOURCE_ID) as mapboxgl.GeoJSONSource).setData({
 					type: 'FeatureCollection',
 					features: allFeatures
-				});
+				})
 			} else {
-				console.log('Creating new properties source and layer');
+				console.log('Creating new properties source and layer')
 				// Add source first
 				map.current.addSource(PROPERTIES_SOURCE_ID, {
 					type: 'geojson',
@@ -865,7 +877,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						type: 'FeatureCollection',
 						features: allFeatures
 					}
-				});
+				})
 				
 				// Add layer for all properties - base layer with increased visibility
 				map.current.addLayer({
@@ -891,7 +903,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							'#B71C1C'  // Darker red for other properties
 						]
 					}
-				});
+				})
 				
 				// Add an outline layer for better visibility
 				map.current.addLayer({
@@ -910,22 +922,22 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						'line-width': 2,
 						'line-opacity': 0.9
 					}
-				});
+				})
 			}
 			
-			setPropertiesLoaded(true);
-			console.log('Properties successfully loaded on map');
+			setPropertiesLoaded(true)
+			console.log('Properties successfully loaded on map')
 		} catch (err) {
-			console.error('Error loading properties on map:', err);
+			console.error('Error loading properties on map:', err)
 		}
-	}, [users, user]);
+	}, [map, user, usersRef])
 	
 	// Function to refresh property display
 	const refreshPropertyDisplay = useCallback(() => {
-		console.log('Refreshing property display');
+		console.log('Refreshing property display')
 		
 		// First reload properties data
-		loadProperties();
+		loadProperties()
 		
 		// Force a repaint of the properties layer
 		if (map.current && map.current.getLayer(PROPERTIES_LAYER_ID)) {
@@ -941,7 +953,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					'#FFC107', // Yellow for properties for sale
 					'#F44336'  // Red for other properties
 				]
-			);
+			)
 			
 			// Update outline color
 			map.current.setPaintProperty(
@@ -955,7 +967,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					'#FF8F00', // Darker yellow for properties for sale
 					'#B71C1C'  // Darker red for other properties
 				]
-			);
+			)
 			
 			// Update property outline layer if it exists
 			if (map.current.getLayer('property-outline')) {
@@ -970,36 +982,36 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						'#FF8F00', // Darker yellow for properties for sale
 						'#B71C1C'  // Darker red for other properties
 					]
-				);
+				)
 			}
 		}
-	}, [loadProperties]);
+	}, [loadProperties])
 
 	// Update the useEffect for loading properties when users data changes or map loads
 	useEffect(() => {
-		if (map.current && styleLoaded && users && Object.keys(users).length > 0) {
-			console.log('Map and users data ready - loading properties from useEffect');
+		if (map.current && styleLoaded && usersRef.current && Object.keys(usersRef.current).length > 0) {
+			console.log('Map and users data ready - loading properties from useEffect')
 			// Add a small delay to ensure the map is fully ready
 			setTimeout(() => {
-				loadProperties();
-			}, 300);
+				loadProperties()
+			}, 300)
 		}
-	}, [users, styleLoaded, loadProperties]);
+	}, [usersRef, styleLoaded, loadProperties])
 
 	// Update the useEffect for loading properties after a purchase
 	useEffect(() => {
-		if (user && mapInstance && styleLoaded && Object.keys(users || {}).length > 0) {
-			console.log('User logged in or changed, refreshing properties');
-			loadProperties();
+		if (user && mapInstance && styleLoaded && Object.keys(usersRef.current || {}).length > 0) {
+			console.log('User logged in or changed, refreshing properties')
+			loadProperties()
 		}
-	}, [user, mapInstance, styleLoaded, users, loadProperties]);
+	}, [user, mapInstance, styleLoaded, loadProperties])
 
 	// Function to handle save property details
 	const handleSavePropertyDetails = async () => {
-		if (!selectedProperty || !user) return;
+		if (!selectedProperty || !user) return
 		
 		try {
-			setIsLoading(true);
+			setIsLoading(true)
 			
 			// Update property details
 			const updatedProperty: Property = {
@@ -1009,10 +1021,27 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				address: propertyAddress,
 				forSale: propertyForSale,
 				salePrice: propertySalePrice
-			};
+			}
 			
-			// Save to database
-			await updateUserProperty(user.uid, updatedProperty);
+			// Save to database using the new PUT endpoint
+			const response = await fetch(`${API_URL}/properties/${selectedProperty.id}`, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					'Firebase-UID': user.uid
+				},
+				body: JSON.stringify({
+					name: propertyName,
+					description: propertyDescription,
+					address: propertyAddress,
+					forSale: propertyForSale,
+					salePrice: propertySalePrice
+				})
+			})
+			
+			if (!response.ok) {
+				throw new Error('Failed to update property')
+			}
 			
 			toast({
 				title: 'Success',
@@ -1020,41 +1049,41 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				status: 'success',
 				duration: 2000,
 				isClosable: true,
-			});
+			})
 			
 			// Close modal
-			setIsPropertyModalOpen(false);
+			setIsPropertyModalOpen(false)
 			
 			// Refresh properties
-			await fetchUsers();
+			await fetchUsers()
 			
 			// Force property reload with a small delay
 			setTimeout(() => {
-				refreshPropertyDisplay();
-			}, 500);
+				refreshPropertyDisplay()
+			}, 500)
 		} catch (error) {
-			console.error('Error saving property details:', error);
+			console.error('Error saving property details:', error)
 			toast({
 				title: 'Error',
 				description: 'Failed to update property details',
 				status: 'error',
 				duration: 2000,
 				isClosable: true,
-			});
+			})
 		} finally {
-			setIsLoading(false);
+			setIsLoading(false)
 		}
-	};
+	}
 	
 	// Function to handle property purchase
 	const handleBuyListedProperty = async () => {
-		if (!selectedProperty || !user) return;
+		if (!selectedProperty || !user) return
 		
 		try {
-			setIsLoading(true);
+			setIsLoading(true)
 			
 			// Check user tokens
-			const userData = users[user.uid];
+			const userData = usersRef.current[user.uid]
 			if (!userData) {
 				toast({
 					title: 'Error',
@@ -1062,8 +1091,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					status: 'error',
 					duration: 2000,
 					isClosable: true,
-				});
-				return;
+				})
+				return
 			}
 			
 			if (userData.tokens < (selectedProperty.salePrice || 0)) {
@@ -1073,59 +1102,96 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					status: 'error',
 					duration: 2000,
 					isClosable: true,
-				});
-				return;
+				})
+				return
 			}
 			
-			// Transfer property
-			const success = await transferProperty(
-				selectedProperty.id,
-				selectedProperty.owner,
-				user.uid,
-				selectedProperty.salePrice || 0
-			);
+			// Implement a transfer property endpoint in your API
+			// For now we'll simulate it with current API endpoints
 			
-			if (success) {
-				toast({
-					title: 'Success',
-					description: 'Property purchased successfully',
-					status: 'success',
-					duration: 2000,
-					isClosable: true,
-				});
-				
-				// Close modal
-				setIsPropertyModalOpen(false);
-				
-				// Refresh properties
-				await fetchUsers();
-				
-				// Force property reload with a small delay
-				setTimeout(() => {
-					refreshPropertyDisplay();
-				}, 500);
-			} else {
-				toast({
-					title: 'Error',
-					description: 'Failed to purchase property',
-					status: 'error',
-					duration: 2000,
-					isClosable: true,
-				});
+			// 1. Deduct tokens from buyer (current user)
+			const updateBuyerResponse = await fetch(`${API_URL}/users/update`, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					'Firebase-UID': user.uid
+				},
+				body: JSON.stringify({
+					tokens: userData.tokens - (selectedProperty.salePrice || 0)
+				})
+			})
+			
+			if (!updateBuyerResponse.ok) {
+				throw new Error('Failed to update buyer tokens')
 			}
+			
+			// 2. Add tokens to seller
+			const sellerData = usersRef.current[selectedProperty.owner]
+			if (sellerData) {
+				const updateSellerResponse = await fetch(`${API_URL}/users/update`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Firebase-UID': selectedProperty.owner
+					},
+					body: JSON.stringify({
+						tokens: sellerData.tokens + (selectedProperty.salePrice || 0)
+					})
+				})
+				
+				if (!updateSellerResponse.ok) {
+					throw new Error('Failed to update seller tokens')
+				}
+			}
+			
+			// 3. Update property ownership
+			const propertyResponse = await fetch(`${API_URL}/properties/${selectedProperty.id}`, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					'Firebase-UID': user.uid
+				},
+				body: JSON.stringify({
+					owner: user.uid,
+					forSale: false
+				})
+			})
+			
+			if (!propertyResponse.ok) {
+				throw new Error('Failed to update property ownership')
+			}
+			
+			toast({
+				title: 'Success',
+				description: 'Property purchased successfully',
+				status: 'success',
+				duration: 2000,
+				isClosable: true,
+			})
+			
+			// Close modal
+			setIsPropertyModalOpen(false)
+			
+			// Refresh properties
+			await fetchUsers()
+			
+			// Force property reload with a small delay
+			setTimeout(() => {
+				refreshPropertyDisplay()
+			}, 500)
 		} catch (error) {
-			console.error('Error purchasing property:', error);
+			console.error('Error purchasing property:', error)
 			toast({
 				title: 'Error',
 				description: 'An error occurred during purchase',
 				status: 'error',
 				duration: 2000,
 				isClosable: true,
-			});
+			})
 		} finally {
-			setIsLoading(false);
+			setIsLoading(false)
 		}
-	};
+	}
 
 	// Function to handle mouse down for selection
 	const handleMouseDown = useCallback((e: mapboxgl.MapMouseEvent) => {
@@ -1154,7 +1220,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				
 				// Check if the cell is already owned
 				if (isCellAlreadyOwned(cellKey)) {
-					return;
+					return
 				}
 				
 				// Toggle selection mode
@@ -1306,7 +1372,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			})
 
 			// Handle mouse event for selection
-			newMap.on('click', PROPERTIES_LAYER_ID, handlePropertyClick);
+			newMap.on('click', PROPERTIES_LAYER_ID, handlePropertyClick)
 
 			return () => {
 				mounted = false
@@ -1407,7 +1473,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	}, [])
 
 	// Function to handle buy property
-	const handleBuyProperty = async () => {
+	const handleBuyProperty = async (): Promise<void> => {
 		if (!user) {
 			toast({
 				title: 'Error',
@@ -1417,11 +1483,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				isClosable: true,
 			})
 			return
-		}
-
-		// Ensure users data is loaded
-		if (!users || Object.keys(users).length === 0) {
-			await fetchUsers();
 		}
 
 		const selectedCellArray = Array.from(selectedCells.current)
@@ -1437,7 +1498,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 		
 		// Check if any cells are already owned
-		const ownedCells = selectedCellArray.filter(cell => isCellAlreadyOwned(cell));
+		const ownedCells = selectedCellArray.filter(cell => isCellAlreadyOwned(cell))
 		if (ownedCells.length > 0) {
 			toast({
 				title: 'Error',
@@ -1449,74 +1510,90 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			return
 		}
 
-		// Check for user profile
-		let userProfile = users[user.uid];
-		
-		// If user not found in local state, check API
-		if (!userProfile) {
-			console.log('User not found in local state, checking API...');
+		// Check for user profile with the new API
+		try {
+			setIsLoading(true)
 			
-			try {
-				// Check if user exists in database but isn't loaded
-				const response = await fetch(`http://localhost:3001/users?uid=${user.uid}`);
-				const existingUsers = await response.json();
+			// Ensure we have the latest users data
+			await fetchUsers()
+			
+			// Check if user profile exists in the current data
+			let userProfile = usersRef.current[user.uid]
+			
+			if (!userProfile) {
+				console.log('User profile not found, checking API directly...')
 				
-				if (existingUsers && existingUsers.length > 0) {
-					// User exists in database but wasn't in our state
-					console.log('User found in database, loading...');
-					await fetchUsers();
-					userProfile = users[user.uid]; // Update reference after fetching
+				const response = await fetch(`${API_URL}/users/profile`, {
+					headers: {
+						'Firebase-UID': user.uid
+					}
+				})
+				
+				if (!response.ok) {
+					if (response.status === 404 || response.status === 401) {
+						console.log('Creating new user profile...')
+						// Create user if not found
+						const createResponse = await fetch(`${API_URL}/users/create`, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json'
+							},
+							body: JSON.stringify({
+								uid: user.uid,
+								email: user.email || 'unknown@example.com',
+								name: user.displayName || 'User'
+							})
+						})
+						
+						if (!createResponse.ok) {
+							throw new Error('Failed to create user profile')
+						}
+						
+						// Fetch the newly created user directly from API
+						const newUserResponse = await fetch(`${API_URL}/users/profile`, {
+							headers: {
+								'Firebase-UID': user.uid
+							}
+						})
+						
+						if (!newUserResponse.ok) {
+							throw new Error('Failed to fetch newly created user profile')
+						}
+						
+						userProfile = await newUserResponse.json()
+						
+						// Also update global users data
+						await fetchUsers()
+					} else {
+						throw new Error('Failed to retrieve user profile')
+					}
 				} else {
-					// User doesn't exist in database at all
-					console.log('Creating new user profile...');
-					// Create user via store function (which has duplicate checking)
-					await useUserStore.getState().addUser({
-						uid: user.uid,
-						email: user.email || 'unknown@example.com',
-						name: user.displayName || 'User'
-					});
-					await fetchUsers();
-					userProfile = users[user.uid]; // Update reference after fetching
+					// User exists in API but not in our local state
+					userProfile = await response.json()
+					await fetchUsers()
 				}
-				
-				if (!userProfile) {
-					toast({
-						title: 'Error',
-						description: 'Failed to retrieve or create user profile',
-						status: 'error',
-						duration: 3000,
-						isClosable: true,
-					});
-					return;
-				}
-			} catch (error) {
-				console.error('Error handling user profile:', error);
+			}
+			
+			// Now check if we have a valid user profile
+			if (!userProfile) {
+				throw new Error('User profile not found after creation')
+			}
+			
+			console.log('Working with user profile:', userProfile)
+			
+			// At this point we should have a valid user profile
+			const totalCost = selectedCellArray.length * propertyPrice
+			if (userProfile.tokens < totalCost) {
 				toast({
 					title: 'Error',
-					description: 'Error while checking user profile',
+					description: `Insufficient tokens. You need ${totalCost} tokens to buy this property`,
 					status: 'error',
 					duration: 3000,
 					isClosable: true,
-				});
-				return;
+				})
+				return
 			}
-		}
-
-		// At this point we should have a valid user profile
-		const totalCost = selectedCellArray.length * propertyPrice;
-		if (userProfile.tokens < totalCost) {
-			toast({
-				title: 'Error',
-				description: `Insufficient tokens. You need ${totalCost} tokens to buy this property`,
-				status: 'error',
-				duration: 3000,
-				isClosable: true,
-			})
-			return
-		}
-
-		setIsLoading(true)
-		try {
+			
 			// Create a new property with a unique ID
 			const propertyId = uuidv4()
 			
@@ -1528,13 +1605,24 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				price: totalCost, // Initial purchase price (could be made resellable later)
 			}
 			
-			console.log('Buying property with data:', propertyData);
+			console.log('Buying property with data:', propertyData)
 			
 			// Deduct tokens for purchase
 			await deductToken(user.uid, totalCost)
 			
-			// Save property to user's properties
-			await updateUserProperty(user.uid, propertyData)
+			// Save property to user's properties using the new API endpoint
+			const propertyResponse = await fetch(`${API_URL}/properties`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Firebase-UID': user.uid
+				},
+				body: JSON.stringify(propertyData)
+			})
+			
+			if (!propertyResponse.ok) {
+				throw new Error('Failed to create property')
+			}
 			
 			toast({
 				title: 'Success',
@@ -1554,23 +1642,23 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Force property reload with a small delay
 			setTimeout(() => {
-				refreshPropertyDisplay();
-			}, 500);
+				refreshPropertyDisplay()
+			}, 500)
 
-			// Add this inside the try block of handleBuyProperty after the setTimeout
+			// Fly to newly purchased property after a short delay
 			setTimeout(() => {
-				console.log('Flying to newly purchased property');
-				flyToProperty(propertyId);
-			}, 1000);
+				console.log('Flying to newly purchased property')
+				flyToProperty(propertyId)
+			}, 1000)
 		} catch (error) {
+			console.error('Buy property error:', error)
 			toast({
 				title: 'Error',
-				description: 'Failed to purchase property',
+				description: error instanceof Error ? error.message : 'Failed to purchase property',
 				status: 'error',
 				duration: 3000,
 				isClosable: true,
 			})
-			console.error('Buy property error:', error)
 		} finally {
 			setIsLoading(false)
 		}
@@ -1581,69 +1669,37 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Add click handler when map loads
 	useEffect(() => {
 		if (map.current && styleLoaded) {
-			console.log('Adding property click handler to map');
-			map.current.on('click', PROPERTIES_LAYER_ID, handlePropertyClick);
+			console.log('Adding property click handler to map')
+			map.current.on('click', PROPERTIES_LAYER_ID, handlePropertyClick)
 			
 			return () => {
-				console.log('Removing property click handler from map');
-				map.current?.off('click', PROPERTIES_LAYER_ID, handlePropertyClick);
-			};
+				console.log('Removing property click handler from map')
+				map.current?.off('click', PROPERTIES_LAYER_ID, handlePropertyClick)
+			}
 		}
-	}, [styleLoaded, user, users, toast, updateSelection]);
+	}, [styleLoaded, user, usersRef, toast, updateSelection])
 
-	// When map loads, fetch users to ensure we have the latest data
+	// Update the useEffect for fetching users when map loads
 	useEffect(() => {
-		if (mapInstance && styleLoaded) {
-			console.log('Map loaded and style ready - fetching latest user data');
+		if (mapInstance && styleLoaded && !isLoadingUsers.current) {
+			console.log('Map loaded and style ready - fetching latest user data')
+			isLoadingUsers.current = true
 			fetchUsers().then(() => {
-				console.log('Users data refreshed after map load');
-			});
+				console.log('Users data refreshed after map load')
+				isLoadingUsers.current = false
+			}).catch(() => {
+				isLoadingUsers.current = false
+			})
 		}
-	}, [mapInstance, styleLoaded, fetchUsers]);
+	}, [mapInstance, styleLoaded, fetchUsers])
 
-	// When user changes (login/logout), refresh properties display
+	// Update the useEffect for loading properties when user changes
 	useEffect(() => {
-		if (user && mapInstance && styleLoaded && Object.keys(users || {}).length > 0) {
-			console.log('User logged in, refreshing properties');
-			loadProperties();
+		if (user && mapInstance && styleLoaded && Object.keys(usersRef.current || {}).length > 0) {
+			console.log('User logged in, refreshing properties')
+			loadProperties()
 		}
-	}, [user, mapInstance, styleLoaded, users]);
-
-	// Add this helper function after loadProperties
-	// Function to fly to a property location
-	const flyToProperty = useCallback((propertyId: string): void => {
-		if (!map.current || !user || !users[user.uid]) return;
-		
-		const userProperties = users[user.uid].properties || [];
-		const property = userProperties.find(p => p.id === propertyId);
-		
-		if (!property || !property.cells || property.cells.length === 0) {
-			console.warn('Cannot fly to property: property not found or has no cells');
-			return;
-		}
-		
-		// Get the first cell to determine location
-		const firstCell = property.cells[0];
-		const parts = firstCell.split(',');
-		if (parts.length !== 2) return;
-		
-		const lngIndex = parseInt(parts[0], 10);
-		const latIndex = parseInt(parts[1], 10);
-		
-		if (isNaN(lngIndex) || isNaN(latIndex)) return;
-		
-		const lng = lngIndex * GRID_SIZE;
-		const lat = latIndex * GRID_SIZE_LAT;
-		
-		console.log(`Flying to property location: ${lng}, ${lat}`);
-		
-		// Fly to the property location and zoom in enough to see it
-		map.current.flyTo({
-			center: [lng, lat],
-			zoom: Math.max(map.current.getZoom(), MIN_GRID_ZOOM + 1),
-			essential: true
-		});
-	}, [map, user, users]);
+	}, [user, mapInstance, styleLoaded, loadProperties])
 
 	return (
 		<>
@@ -1694,7 +1750,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				</Box>
 
 				{/* Show user tokens */}
-				{user && users[user.uid] && (
+				{user && usersRef.current[user.uid] && (
 					<Box
 						position="absolute"
 						top="56px"
@@ -1705,7 +1761,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						borderRadius="md"
 						boxShadow="md"
 					>
-						<Text fontWeight="bold" color="gray.800">Tokens: {users[user.uid].tokens}</Text>
+						<Text fontWeight="bold" color="gray.800">Tokens: {usersRef.current[user.uid].tokens}</Text>
 					</Box>
 				)}
 

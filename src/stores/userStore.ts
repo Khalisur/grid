@@ -41,55 +41,84 @@ interface UserStore {
 	) => Promise<boolean>
 }
 
-// Update API URL based on environment
-const API_URL = import.meta.env.DEV ? 'http://localhost:3001' : '/api'
+// Update API URL based on environment - now using the new API from env
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
 export const useUserStore = create<UserStore>()((set, get) => ({
 	users: {},
 	fetchUsers: async () => {
 		try {
-			const response = await fetch(`${API_URL}/users`)
+			// Get all users - would need to be adapted for a real application
+			// since this is just a demo, we'll simply call the endpoint for each user we know about
+			const currentUsers = get().users;
+			const userIds = Object.keys(currentUsers);
 			
-			const usersArray = await response.json()
-			console.log(usersArray,"user----------->")
-			// Convert array to object with uid as key
-			const usersObject = usersArray.reduce(
-				(acc: Record<string, UserData>, user: UserData) => {
-					acc[user.uid] = user
-					return acc
-				},
-				{},
-			)
-			set({ users: usersObject })
+			if (userIds.length === 0) {
+				// If no users loaded yet, try to get properties
+				const propsResponse = await fetch(`${API_URL}/properties`);
+				if (propsResponse.ok) {
+					const properties = await propsResponse.json();
+					// Extract unique user IDs from properties
+					const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))];
+					
+					// Load user data for each unique owner
+					const usersData: Record<string, UserData> = {};
+					for (const uid of uniqueUserIds) {
+						if (typeof uid === 'string') { // Check that uid is a string
+							try {
+								const userResponse = await fetch(`${API_URL}/users/profile`, {
+									headers: {
+										'Firebase-UID': uid
+									}
+								});
+								if (userResponse.ok) {
+									const userData = await userResponse.json();
+									usersData[uid] = userData;
+								}
+							} catch (error) {
+								console.error(`Error fetching user ${uid}:`, error);
+							}
+						}
+					}
+					
+					set({ users: usersData });
+				}
+				return;
+			}
+			
+			// Update all known users
+			const updatedUsers: Record<string, UserData> = {};
+			for (const uid of userIds) {
+				try {
+					const response = await fetch(`${API_URL}/users/profile`, {
+						headers: {
+							'Firebase-UID': uid
+						}
+					});
+					
+					if (response.ok) {
+						const userData = await response.json();
+						updatedUsers[uid] = userData;
+					}
+				} catch (error) {
+					console.error(`Error fetching user ${uid}:`, error);
+					// Keep existing user data if fetch fails
+					updatedUsers[uid] = currentUsers[uid];
+				}
+			}
+			
+			set({ users: updatedUsers });
 		} catch (error) {
-			console.error('Error fetching users:', error)
+			console.error('Error fetching users:', error);
 		}
 	},
 	addUser: async (user) => {
 		try {
-			console.log('Attempting to add user:', user)
-			console.log('API URL:', `${API_URL}/users`)
+			console.log('Attempting to add user:', user);
+			console.log('API URL:', `${API_URL}/users/create`);
 
-			// First check if the user already exists in the API
-			const checkResponse = await fetch(`${API_URL}/users?uid=${user.uid}`);
-			const existingUsers = await checkResponse.json();
-			
-			if (existingUsers && existingUsers.length > 0) {
-				console.log('User already exists in API, not creating duplicate:', existingUsers[0]);
-				
-				// Update the local state with the existing user
-				set((state) => ({
-					users: {
-						...state.users,
-						[user.uid]: existingUsers[0],
-					},
-				}));
-				
-				return;
-			}
-
-			// If we reach here, the user doesn't exist and should be created
-			const response = await fetch(`${API_URL}/users`, {
+			// Use the new create user endpoint
+			const response = await fetch(`${API_URL}/users/create`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -97,122 +126,88 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 				body: JSON.stringify({
 					uid: user.uid,
 					email: user.email,
-					name: user.name,
-					tokens: 10,
-					properties: [],
+					name: user.name
 				}),
-			})
+			});
 
-			console.log('Response status:', response.status)
-			console.log('Response status text:', response.statusText)
+			console.log('Response status:', response.status);
+			console.log('Response status text:', response.statusText);
 
 			if (!response.ok) {
-				const errorText = await response.text()
+				const errorText = await response.text();
 				throw new Error(
 					`HTTP error! status: ${response.status}, body: ${errorText}`,
-				)
+				);
 			}
 
-			const newUser = await response.json()
-			console.log('New user created:', newUser)
+			const responseData = await response.json();
+			const newUser = responseData.user;
+			console.log('New user created:', newUser);
 
 			set((state) => ({
 				users: {
 					...state.users,
 					[user.uid]: newUser,
 				},
-			}))
+			}));
 		} catch (error) {
-			console.error('Detailed error in addUser:', error)
-			throw error
+			console.error('Detailed error in addUser:', error);
+			throw error;
 		}
 	},
 	updateUserProperty: async (uid, property) => {
 		try {
-			// First, we need to find the user by uid to get their ID
-			const response = await fetch(`${API_URL}/users?uid=${uid}`);
-			const users = await response.json();
-			
-			if (!users || users.length === 0) {
-				console.error('User not found with uid:', uid);
-				return;
-			}
-			
-			// Get the user's actual ID (not uid) that JSON Server uses
-			const user = users[0];
-			const userId = user.id;
-			
-			console.log('Found user:', user);
-			console.log('Using JSON Server ID:', userId);
-			
-			// Now update the user using the correct ID for JSON Server
-			const existingProperties = user.properties || [];
-			const existingPropertyIndex = existingProperties.findIndex(
-				(p: Property) => p.id === property.id,
-			);
-
-			const updatedProperties = [...existingProperties];
-			if (existingPropertyIndex >= 0) {
-				updatedProperties[existingPropertyIndex] = property;
-			} else {
-				updatedProperties.push(property);
-			}
-
-			const updateResponse = await fetch(`${API_URL}/users/${userId}`, {
-				method: 'PATCH',
+			// Use the new properties endpoint
+			const response = await fetch(`${API_URL}/properties/${property.id}`, {
+				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',
+					'Firebase-UID': uid
 				},
-				body: JSON.stringify({
-					properties: updatedProperties,
-				}),
+				body: JSON.stringify(property),
 			});
 			
-			if (!updateResponse.ok) {
-				const errorText = await updateResponse.text();
-				throw new Error(`HTTP error: ${updateResponse.status}, ${errorText}`);
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`HTTP error: ${response.status}, ${errorText}`);
 			}
 			
-			const updatedUser = await updateResponse.json();
-			
-			// Update the local state to reflect the change
-			set((state) => ({
-				users: {
-					...state.users,
-					[uid]: updatedUser,
-				},
-			}));
+			// After updating the property, refresh the user data
+			await get().fetchUsers();
 		} catch (error) {
 			console.error('Error updating user property:', error);
 		}
 	},
 	deductToken: async (uid, amount = 1) => {
 		try {
-			// First, we need to find the user by uid to get their ID
-			const response = await fetch(`${API_URL}/users?uid=${uid}`);
-			const users = await response.json();
+			// First, get the current user profile
+			const response = await fetch(`${API_URL}/users/profile`, {
+				headers: {
+					'Firebase-UID': uid
+				}
+			});
 			
-			if (!users || users.length === 0) {
+			if (!response.ok) {
 				console.error('User not found with uid:', uid);
 				return;
 			}
 			
-			// Get the user's actual ID (not uid) that JSON Server uses
-			const user = users[0];
-			const userId = user.id;
+			const userData = await response.json();
 			
-			if (user.tokens < amount) {
+			if (userData.tokens < amount) {
 				console.error('Insufficient tokens');
 				return;
 			}
 
-			const updateResponse = await fetch(`${API_URL}/users/${userId}`, {
-				method: 'PATCH',
+			// Update the user's tokens
+			const updateResponse = await fetch(`${API_URL}/users/update`, {
+				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',
+					'Firebase-UID': uid
 				},
 				body: JSON.stringify({
-					tokens: user.tokens - amount,
+					tokens: userData.tokens - amount,
 				}),
 			});
 			
@@ -221,41 +216,37 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 				throw new Error(`HTTP error: ${updateResponse.status}, ${errorText}`);
 			}
 			
-			const updatedUser = await updateResponse.json();
-			
-			// Update the local state to reflect the change
-			set((state) => ({
-				users: {
-					...state.users,
-					[uid]: updatedUser,
-				},
-			}));
+			// Refresh users to get updated data
+			await get().fetchUsers();
 		} catch (error) {
 			console.error('Error deducting token:', error);
 		}
 	},
 	addToken: async (uid, amount) => {
 		try {
-			// First, we need to find the user by uid to get their ID
-			const response = await fetch(`${API_URL}/users?uid=${uid}`);
-			const users = await response.json();
+			// First, get the current user profile
+			const response = await fetch(`${API_URL}/users/profile`, {
+				headers: {
+					'Firebase-UID': uid
+				}
+			});
 			
-			if (!users || users.length === 0) {
+			if (!response.ok) {
 				console.error('User not found with uid:', uid);
 				return;
 			}
 			
-			// Get the user's actual ID (not uid) that JSON Server uses
-			const user = users[0];
-			const userId = user.id;
+			const userData = await response.json();
 
-			const updateResponse = await fetch(`${API_URL}/users/${userId}`, {
-				method: 'PATCH',
+			// Update the user's tokens
+			const updateResponse = await fetch(`${API_URL}/users/update`, {
+				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',
+					'Firebase-UID': uid
 				},
 				body: JSON.stringify({
-					tokens: user.tokens + amount,
+					tokens: userData.tokens + amount,
 				}),
 			});
 			
@@ -264,129 +255,115 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 				throw new Error(`HTTP error: ${updateResponse.status}, ${errorText}`);
 			}
 			
-			const updatedUser = await updateResponse.json();
-			
-			// Update the local state to reflect the change
-			set((state) => ({
-				users: {
-					...state.users,
-					[uid]: updatedUser,
-				},
-			}));
+			// Refresh users to get updated data
+			await get().fetchUsers();
 		} catch (error) {
 			console.error('Error adding tokens:', error);
 		}
 	},
-	transferProperty: async (
-		propertyId: string, 
-		fromUserId: string, 
-		toUserId: string, 
-		amount: number
-	) => {
+	transferProperty: async (propertyId, fromUserId, toUserId, amount) => {
 		try {
-			// First get data for both users
-			const fromUserResponse = await fetch(`${API_URL}/users?uid=${fromUserId}`);
-			const fromUsers = await fromUserResponse.json();
+			// This would be better implemented as a single API call to handle atomically
+			// But for now we'll implement it in steps
 			
-			const toUserResponse = await fetch(`${API_URL}/users?uid=${toUserId}`);
-			const toUsers = await toUserResponse.json();
-			
-			if (!fromUsers || fromUsers.length === 0 || !toUsers || toUsers.length === 0) {
-				console.error('One or both users not found');
-				return false;
-			}
-			
-			// Get the users
-			const fromUser = fromUsers[0];
-			const toUser = toUsers[0];
-			
-			// Get JSON Server IDs
-			const fromUserJSONId = fromUser.id;
-			const toUserJSONId = toUser.id;
-			
-			// Check if buyer has enough tokens
-			if (toUser.tokens < amount) {
-				console.error('Buyer has insufficient tokens');
-				return false;
-			}
-			
-			// Find the property in the seller's properties
-			const fromUserProperties = fromUser.properties || [];
-			const propertyIndex = fromUserProperties.findIndex((p: Property) => p.id === propertyId);
-			
-			if (propertyIndex === -1) {
-				console.error('Property not found in seller properties');
-				return false;
-			}
-			
-			// Get the property
-			const property = {...fromUserProperties[propertyIndex]};
-			
-			// Update property owner and remove forSale flag
-			property.owner = toUserId;
-			property.forSale = false;
-			
-			// Remove property from seller
-			const updatedFromProperties = [...fromUserProperties];
-			updatedFromProperties.splice(propertyIndex, 1);
-			
-			// Add property to buyer
-			const toUserProperties = toUser.properties || [];
-			const updatedToProperties = [...toUserProperties, property];
-			
-			// Update token balances
-			const fromUserNewTokens = fromUser.tokens + amount;
-			const toUserNewTokens = toUser.tokens - amount;
-			
-			// Update seller
-			const updateFromResponse = await fetch(`${API_URL}/users/${fromUserJSONId}`, {
-				method: 'PATCH',
+			// 1. Deduct tokens from buyer
+			const buyerResponse = await fetch(`${API_URL}/users/profile`, {
 				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					properties: updatedFromProperties,
-					tokens: fromUserNewTokens
-				}),
+					'Firebase-UID': toUserId
+				}
 			});
 			
-			if (!updateFromResponse.ok) {
-				throw new Error(`Error updating seller: ${updateFromResponse.status}`);
+			if (!buyerResponse.ok) {
+				throw new Error('Buyer not found');
 			}
 			
-			// Update buyer
-			const updateToResponse = await fetch(`${API_URL}/users/${toUserJSONId}`, {
-				method: 'PATCH',
+			const buyer = await buyerResponse.json();
+			
+			if (buyer.tokens < amount) {
+				throw new Error('Insufficient tokens');
+			}
+			
+			// Update buyer tokens
+			const updateBuyerResponse = await fetch(`${API_URL}/users/update`, {
+				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',
+					'Firebase-UID': toUserId
 				},
 				body: JSON.stringify({
-					properties: updatedToProperties,
-					tokens: toUserNewTokens
-				}),
+					tokens: buyer.tokens - amount
+				})
 			});
 			
-			if (!updateToResponse.ok) {
-				throw new Error(`Error updating buyer: ${updateToResponse.status}`);
+			if (!updateBuyerResponse.ok) {
+				throw new Error('Failed to update buyer tokens');
 			}
 			
-			// Get updated users
-			const updatedFromUser = await updateFromResponse.json();
-			const updatedToUser = await updateToResponse.json();
+			// 2. Add tokens to seller
+			const sellerResponse = await fetch(`${API_URL}/users/profile`, {
+				headers: {
+					'Firebase-UID': fromUserId
+				}
+			});
 			
-			// Update local state
-			set((state) => ({
-				users: {
-					...state.users,
-					[fromUserId]: updatedFromUser,
-					[toUserId]: updatedToUser,
+			if (sellerResponse.ok) {
+				const seller = await sellerResponse.json();
+				
+				const updateSellerResponse = await fetch(`${API_URL}/users/update`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Firebase-UID': fromUserId
+					},
+					body: JSON.stringify({
+						tokens: seller.tokens + amount
+					})
+				});
+				
+				if (!updateSellerResponse.ok) {
+					// Rollback buyer tokens if seller update fails
+					await fetch(`${API_URL}/users/update`, {
+						method: 'PUT',
+						headers: {
+							'Content-Type': 'application/json',
+							'Firebase-UID': toUserId
+						},
+						body: JSON.stringify({
+							tokens: buyer.tokens
+						})
+					});
+					
+					throw new Error('Failed to update seller tokens');
+				}
+			}
+			
+			// 3. Transfer property ownership
+			const propertyResponse = await fetch(`${API_URL}/properties/${propertyId}`, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					'Firebase-UID': toUserId
 				},
-			}));
+				body: JSON.stringify({
+					owner: toUserId,
+					forSale: false
+				})
+			});
+			
+			if (!propertyResponse.ok) {
+				// This is a serious failure case - money transferred but property didn't
+				// In a real app, you would want better error handling/rollback
+				console.error('Failed to transfer property but tokens were transferred!');
+				throw new Error('Failed to transfer property');
+			}
+			
+			// Refresh users to get updated data
+			await get().fetchUsers();
 			
 			return true;
 		} catch (error) {
 			console.error('Error transferring property:', error);
 			return false;
 		}
-	},
+	}
 }))
