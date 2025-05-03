@@ -777,18 +777,21 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		console.log(`Starting property loading process... (attempt ${propertyLoadAttempts + 1})`)
 		console.log('Users data available:', Object.keys(usersRef.current).length, 'users')
 		
-		if (user) {
-			console.log('Current user uid:', user.uid)
-			if (usersRef.current[user.uid]) {
-				console.log('Current user properties count:', usersRef.current[user.uid]?.properties?.length || 0)
-			} else {
-				console.warn('Current user data not found in users object!')
-			}
-		}
-
 		try {
 			// Create features for all properties
 			const allFeatures: GeoJSON.Feature[] = []
+			// Log all user IDs we have data for
+			console.log('User IDs in usersRef:', Object.keys(usersRef.current).join(', '))
+			
+			// Count properties per user for debugging
+			let totalPropertyCount = 0
+			Object.entries(usersRef.current).forEach(([uid, userData]) => {
+				const propCount = userData.properties?.length || 0
+				totalPropertyCount += propCount
+				console.log(`User ${userData.name} (${uid}) has ${propCount} properties`)
+			})
+			
+			console.log(`Total properties across all users: ${totalPropertyCount}`)
 			
 			// Process all users and their properties
 			Object.values(usersRef.current).forEach(userData => {
@@ -865,6 +868,60 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			})
 			
 			console.log(`Loaded ${allFeatures.length} total property cells`)
+			
+			// If no features were loaded, this is a critical failure - try to repair by fetching all properties
+			if (allFeatures.length === 0 && totalPropertyCount > 0) {
+				console.warn('No features were created despite having properties in userData - trying to repair')
+				
+				// Schedule a fresh fetch of all properties
+				setTimeout(async () => {
+					try {
+						console.log('Attempting to repair property loading...')
+						const propsResponse = await fetch(`${API_URL}/properties`)
+						
+						if (propsResponse.ok) {
+							const properties = await propsResponse.json()
+							console.log(`Repair: Fetched ${properties.length} properties directly from API`)
+							
+							// Force a new attempt to load properties after fetching fresh data
+							const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))]
+							
+							// Make sure we have data for all users
+							let fetchedUsers = 0
+							for (const uid of uniqueUserIds) {
+								if (typeof uid === 'string') {
+									try {
+										const userResponse = await fetch(`${API_URL}/users/profile`, {
+											headers: {
+												'Firebase-UID': uid
+											}
+										})
+										if (userResponse.ok) {
+											const userData = await userResponse.json()
+											if (usersRef.current) {
+												usersRef.current[uid] = userData
+												fetchedUsers++
+											}
+										}
+									} catch (error) {
+										console.error(`Repair: Error fetching user ${uid}:`, error)
+									}
+								}
+							}
+							console.log(`Repair: Fetched ${fetchedUsers} users`)
+							
+							// Try loading properties again after repairing
+							setTimeout(() => {
+								loadProperties()
+							}, 300)
+						}
+					} catch (error) {
+						console.error('Repair attempt failed:', error)
+					}
+				}, 500)
+				
+				return false
+			}
 			
 			// Check if the map is still valid
 			if (!map.current || !map.current.isStyleLoaded()) {
@@ -1724,12 +1781,64 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		console.log('Component mounted - scheduling initial property load');
 		
 		// Wait a moment for everything to initialize
-		const initialLoadTimeout = setTimeout(() => {
+		const initialLoadTimeout = setTimeout(async () => {
 			if (map.current && map.current.isStyleLoaded()) {
 				console.log('Running initial property load');
-				fetchUsers().then(() => {
-					loadProperties();
-				});
+				
+				try {
+					// First try to get all properties directly
+					const propsResponse = await fetch(`${API_URL}/properties`);
+					if (propsResponse.ok) {
+						const properties = await propsResponse.json();
+						console.log(`Initial load: Fetched ${properties.length} total properties`);
+						
+						// Extract unique user IDs from properties
+						const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))];
+						console.log(`Initial load: Found ${uniqueUserIds.length} unique property owners`);
+						
+						// Load data for each property owner
+						for (const uid of uniqueUserIds) {
+							if (typeof uid === 'string') {
+								try {
+									const userResponse = await fetch(`${API_URL}/users/profile`, {
+										headers: {
+											'Firebase-UID': uid
+										}
+									});
+									if (userResponse.ok) {
+										const userData = await userResponse.json();
+										console.log(`Initial load: Loaded data for user: ${userData.name}`);
+										// Add to users ref
+										if (usersRef.current) {
+											usersRef.current[uid] = userData;
+										}
+									}
+								} catch (error) {
+									console.error(`Error fetching user ${uid}:`, error);
+								}
+							}
+						}
+						
+						// Then load properties
+						setTimeout(() => {
+							console.log('Initial load: Loading all properties');
+							loadProperties();
+							
+							// Try again after a delay to ensure all properties load
+							setTimeout(() => loadProperties(), 1000);
+						}, 200);
+					} else {
+						console.warn('Failed to fetch properties in initial load');
+						fetchUsers().then(() => {
+							loadProperties();
+						});
+					}
+				} catch (error) {
+					console.error('Error in initial property load:', error);
+					fetchUsers().then(() => {
+						loadProperties();
+					});
+				}
 			} else {
 				console.log('Map not ready for initial property load');
 			}
@@ -1807,6 +1916,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			// Try to fetch user data immediately when user is available
 			const fetchUserData = async () => {
 				try {
+					// First, get the current user's data
 					const response = await fetch(`${API_URL}/users/profile`, {
 						headers: {
 							'Firebase-UID': user.uid
@@ -1822,8 +1932,49 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							usersRef.current[user.uid] = userData;
 						}
 						
-						// Also do a full refresh of all users
-						fetchUsers();
+						// Now specifically fetch ALL properties to ensure we get other users' data too
+						const propsResponse = await fetch(`${API_URL}/properties`);
+						if (propsResponse.ok) {
+							const properties = await propsResponse.json();
+							console.log(`Fetched ${properties.length} total properties from all users`);
+							
+							// Extract unique user IDs from properties
+							const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))];
+							console.log(`Found ${uniqueUserIds.length} unique property owners`);
+							
+							// Load data for each property owner
+							for (const uid of uniqueUserIds) {
+								if (uid !== user.uid && typeof uid === 'string') { // Skip current user, already loaded
+									try {
+										const userResponse = await fetch(`${API_URL}/users/profile`, {
+											headers: {
+												'Firebase-UID': uid
+											}
+										});
+										if (userResponse.ok) {
+											const otherUserData = await userResponse.json();
+											console.log(`Loaded data for user: ${otherUserData.name}`);
+											// Add to users ref
+											if (usersRef.current) {
+												usersRef.current[uid] = otherUserData;
+											}
+										}
+									} catch (error) {
+										console.error(`Error fetching user ${uid}:`, error);
+									}
+								}
+							}
+							
+							// Finally do a full refresh and force property reload
+							setTimeout(() => {
+								console.log('Loading all properties after user login');
+								loadProperties();
+								
+								// Try multiple times with increasing delays to ensure properties load
+								setTimeout(() => loadProperties(), 500);
+								setTimeout(() => loadProperties(), 1500);
+							}, 200);
+						}
 					} else if (response.status === 404) {
 						console.log('User not found in API, will be created by ensureUserProfile');
 					}
@@ -1834,7 +1985,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			fetchUserData();
 		}
-	}, [user, fetchUsers]);
+	}, [user, fetchUsers, loadProperties]);
 
 	return (
 		<>
