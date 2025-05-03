@@ -67,7 +67,8 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 					console.log('Updating existing user name from', users[user.uid].name, 'to', name);
 					
 					// Get the API URL
-					const API_URL = import.meta.env.DEV ? 'http://localhost:3001' : '/api';
+					const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+					
 					
 					// Get the user's actual ID (not uid) that JSON Server uses
 					const response = await fetch(`${API_URL}/users?uid=${user.uid}`);
@@ -112,7 +113,7 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 			}
 
 			// Double check against the API directly
-			const API_URL = import.meta.env.DEV ? 'http://localhost:3001' : '/api';
+			const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 			const checkResponse = await fetch(`${API_URL}/users?uid=${user.uid}`);
 			const existingUsers = await checkResponse.json();
 			

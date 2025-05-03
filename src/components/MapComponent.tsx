@@ -758,111 +758,118 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 	}, [user, usersRef, toast, updateSelection])
 
-	// Function to load user properties on the map
+	// Add a new property loading retry mechanism
+	const [propertyLoadAttempts, setPropertyLoadAttempts] = useState(0)
+	const maxPropertyLoadAttempts = 5
+
+	// Improve the loadProperties function with better error handling and logging
 	const loadProperties = useCallback(() => {
-		if (!map.current || !map.current.isStyleLoaded() || !usersRef.current || Object.keys(usersRef.current).length === 0) {
-			console.warn('Cannot load properties: Map not ready or users data not available')
-			return
+		if (!map.current || !map.current.isStyleLoaded()) {
+			console.warn('Cannot load properties: Map not ready')
+			return false
+		}
+		
+		if (!usersRef.current || Object.keys(usersRef.current).length === 0) {
+			console.warn('Cannot load properties: Users data not available')
+			return false
 		}
 
-		console.log('Starting property loading process...')
+		console.log(`Starting property loading process... (attempt ${propertyLoadAttempts + 1})`)
 		console.log('Users data available:', Object.keys(usersRef.current).length, 'users')
 		
 		if (user) {
 			console.log('Current user uid:', user.uid)
-			console.log('All users:', usersRef.current)
 			if (usersRef.current[user.uid]) {
-				console.log('Current user data:', usersRef.current[user.uid])
 				console.log('Current user properties count:', usersRef.current[user.uid]?.properties?.length || 0)
 			} else {
 				console.warn('Current user data not found in users object!')
 			}
 		}
 
-		// Create features for all properties
-		const allFeatures: GeoJSON.Feature[] = []
-		
-		// Process all users and their properties
-		Object.values(usersRef.current).forEach(userData => {
-			if (!userData.properties || userData.properties.length === 0) return
+		try {
+			// Create features for all properties
+			const allFeatures: GeoJSON.Feature[] = []
 			
-			console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`)
-			
-			userData.properties.forEach(property => {
-				// Skip empty properties
-				if (!property.cells || property.cells.length === 0) {
-					console.warn('Skipping property with no cells:', property.id)
-					return
-				}
+			// Process all users and their properties
+			Object.values(usersRef.current).forEach(userData => {
+				if (!userData.properties || userData.properties.length === 0) return
 				
-				console.log(`Processing property ${property.id} with ${property.cells.length} cells`)
+				console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`)
 				
-				// Instead of creating a MultiPolygon, create individual Polygon features for each cell
-				property.cells.forEach(cellKey => {
-					try {
-						const parts = cellKey.split(',')
-						if (parts.length !== 2) {
-							console.warn('Invalid cell key format:', cellKey)
-							return
-						}
-						
-						const lngIndex = parseInt(parts[0], 10)
-						const latIndex = parseInt(parts[1], 10)
-						
-						if (isNaN(lngIndex) || isNaN(latIndex)) {
-							console.warn('Invalid cell coordinates:', cellKey)
-							return
-						}
-						
-						const lng = lngIndex * GRID_SIZE
-						const lat = latIndex * GRID_SIZE_LAT
-						
-						// Create a polygon for this cell
-						const cellPolygon: GeoJSON.Position[][] = [[
-							[lng, lat],
-							[lng + GRID_SIZE, lat], 
-							[lng + GRID_SIZE, lat + GRID_SIZE_LAT],
-							[lng, lat + GRID_SIZE_LAT],
-							[lng, lat]
-						]]
-						
-						// Create a feature for this cell
-						const cellFeature: GeoJSON.Feature = {
-							type: 'Feature',
-							properties: {
-								id: property.id,
-								owner: property.owner,
-								price: property.price,
-								cellCount: property.cells.length,
-								isOwnProperty: user && property.owner === user.uid,
-								cellKey: cellKey,
-								forSale: property.forSale || false,
-								salePrice: property.salePrice || 0,
-								name: property.name || '',
-								description: property.description || '',
-								address: property.address || ''
-							},
-							geometry: {
-								type: 'Polygon',
-								coordinates: cellPolygon
-							}
-						}
-						
-						allFeatures.push(cellFeature)
-					} catch (err) {
-						console.error('Error processing cell:', cellKey, err)
+				userData.properties.forEach(property => {
+					// Skip empty properties
+					if (!property.cells || property.cells.length === 0) {
+						console.warn('Skipping property with no cells:', property.id)
+						return
 					}
+					
+					console.log(`Processing property ${property.id} with ${property.cells.length} cells`)
+					
+					// Instead of creating a MultiPolygon, create individual Polygon features for each cell
+					property.cells.forEach(cellKey => {
+						try {
+							const parts = cellKey.split(',')
+							if (parts.length !== 2) {
+								console.warn('Invalid cell key format:', cellKey)
+								return
+							}
+							
+							const lngIndex = parseInt(parts[0], 10)
+							const latIndex = parseInt(parts[1], 10)
+							
+							if (isNaN(lngIndex) || isNaN(latIndex)) {
+								console.warn('Invalid cell coordinates:', cellKey)
+								return
+							}
+							
+							const lng = lngIndex * GRID_SIZE
+							const lat = latIndex * GRID_SIZE_LAT
+							
+							// Create a polygon for this cell
+							const cellPolygon: GeoJSON.Position[][] = [[
+								[lng, lat],
+								[lng + GRID_SIZE, lat], 
+								[lng + GRID_SIZE, lat + GRID_SIZE_LAT],
+								[lng, lat + GRID_SIZE_LAT],
+								[lng, lat]
+							]]
+							
+							// Create a feature for this cell
+							const cellFeature: GeoJSON.Feature = {
+								type: 'Feature',
+								properties: {
+									id: property.id,
+									owner: property.owner,
+									price: property.price,
+									cellCount: property.cells.length,
+									isOwnProperty: user && property.owner === user.uid,
+									cellKey: cellKey,
+									forSale: property.forSale || false,
+									salePrice: property.salePrice || 0,
+									name: property.name || '',
+									description: property.description || '',
+									address: property.address || ''
+								},
+								geometry: {
+									type: 'Polygon',
+									coordinates: cellPolygon
+								}
+							}
+							
+							allFeatures.push(cellFeature)
+						} catch (err) {
+							console.error('Error processing cell:', cellKey, err)
+						}
+					})
 				})
 			})
-		})
-		
-		console.log(`Loaded ${allFeatures.length} total property cells`)
-		
-		try {
+			
+			console.log(`Loaded ${allFeatures.length} total property cells`)
+			
 			// Check if the map is still valid
 			if (!map.current || !map.current.isStyleLoaded()) {
 				console.warn('Map no longer valid when trying to add property features')
-				return
+				return false
 			}
 			
 			// Add or update sources
@@ -874,140 +881,219 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			} else {
 				console.log('Creating new properties source and layer')
 				// Add source first
-				map.current.addSource(PROPERTIES_SOURCE_ID, {
-					type: 'geojson',
-					data: {
-						type: 'FeatureCollection',
-						features: allFeatures
-					}
-				})
-				
-				// Add layer for all properties - base layer with increased visibility
-				map.current.addLayer({
-					id: PROPERTIES_LAYER_ID,
-					type: 'fill',
-					source: PROPERTIES_SOURCE_ID,
-					paint: {
-						'fill-opacity': 0.7, // Increased opacity for better visibility
-						'fill-color': [
-							'case',
-							['==', ['get', 'isOwnProperty'], true],
-							'#4CAF50', // Green for own properties
-							['==', ['get', 'forSale'], true],
-							'#FFC107', // Yellow for properties for sale
-							'#F44336'  // Red for other properties
-						],
-						'fill-outline-color': [
-							'case',
-							['==', ['get', 'isOwnProperty'], true],
-							'#2E7D32', // Darker green for own properties
-							['==', ['get', 'forSale'], true],
-							'#FF8F00', // Darker yellow for properties for sale
-							'#B71C1C'  // Darker red for other properties
-						]
-					}
-				})
-				
-				// Add an outline layer for better visibility
-				map.current.addLayer({
-					id: 'property-outline',
-					type: 'line',
-					source: PROPERTIES_SOURCE_ID,
-					paint: {
-						'line-color': [
-							'case',
-							['==', ['get', 'isOwnProperty'], true],
-							'#2E7D32', // Darker green for own properties
-							['==', ['get', 'forSale'], true],
-							'#FF8F00', // Darker yellow for properties for sale
-							'#B71C1C'  // Darker red for other properties
-						],
-						'line-width': 2,
-						'line-opacity': 0.9
-					}
-				})
+				try {
+					map.current.addSource(PROPERTIES_SOURCE_ID, {
+						type: 'geojson',
+						data: {
+							type: 'FeatureCollection',
+							features: allFeatures
+						}
+					})
+					
+					// Add layer for all properties - base layer with increased visibility
+					map.current.addLayer({
+						id: PROPERTIES_LAYER_ID,
+						type: 'fill',
+						source: PROPERTIES_SOURCE_ID,
+						paint: {
+							'fill-opacity': 0.7, // Increased opacity for better visibility
+							'fill-color': [
+								'case',
+								['==', ['get', 'isOwnProperty'], true],
+								'#4CAF50', // Green for own properties
+								['==', ['get', 'forSale'], true],
+								'#FFC107', // Yellow for properties for sale
+								'#F44336'  // Red for other properties
+							],
+							'fill-outline-color': [
+								'case',
+								['==', ['get', 'isOwnProperty'], true],
+								'#2E7D32', // Darker green for own properties
+								['==', ['get', 'forSale'], true],
+								'#FF8F00', // Darker yellow for properties for sale
+								'#B71C1C'  // Darker red for other properties
+							]
+						}
+					})
+					
+					// Add an outline layer for better visibility
+					map.current.addLayer({
+						id: 'property-outline',
+						type: 'line',
+						source: PROPERTIES_SOURCE_ID,
+						paint: {
+							'line-color': [
+								'case',
+								['==', ['get', 'isOwnProperty'], true],
+								'#2E7D32', // Darker green for own properties
+								['==', ['get', 'forSale'], true],
+								'#FF8F00', // Darker yellow for properties for sale
+								'#B71C1C'  // Darker red for other properties
+							],
+							'line-width': 2,
+							'line-opacity': 0.9
+						}
+					})
+				} catch (err) {
+					console.error('Error adding property layers:', err)
+					return false
+				}
 			}
 			
 			setPropertiesLoaded(true)
 			console.log('Properties successfully loaded on map')
+			return true
 		} catch (err) {
 			console.error('Error loading properties on map:', err)
+			return false
 		}
-	}, [map, user, usersRef])
-	
-	// Function to refresh property display
-	const refreshPropertyDisplay = useCallback(() => {
-		console.log('Refreshing property display')
-		
-		// First reload properties data
-		loadProperties()
-		
-		// Force a repaint of the properties layer
-		if (map.current && map.current.getLayer(PROPERTIES_LAYER_ID)) {
-			// Update fill color
-			map.current.setPaintProperty(
-				PROPERTIES_LAYER_ID,
-				'fill-color',
-				[
-					'case',
-					['==', ['get', 'isOwnProperty'], true],
-					'#4CAF50', // Green for own properties
-					['==', ['get', 'forSale'], true],
-					'#FFC107', // Yellow for properties for sale
-					'#F44336'  // Red for other properties
-				]
-			)
-			
-			// Update outline color
-			map.current.setPaintProperty(
-				PROPERTIES_LAYER_ID,
-				'fill-outline-color',
-				[
-					'case',
-					['==', ['get', 'isOwnProperty'], true],
-					'#2E7D32', // Darker green for own properties
-					['==', ['get', 'forSale'], true],
-					'#FF8F00', // Darker yellow for properties for sale
-					'#B71C1C'  // Darker red for other properties
-				]
-			)
-			
-			// Update property outline layer if it exists
-			if (map.current.getLayer('property-outline')) {
-				map.current.setPaintProperty(
-					'property-outline',
-					'line-color',
-					[
-						'case',
-						['==', ['get', 'isOwnProperty'], true],
-						'#2E7D32', // Darker green for own properties
-						['==', ['get', 'forSale'], true],
-						'#FF8F00', // Darker yellow for properties for sale
-						'#B71C1C'  // Darker red for other properties
-					]
-				)
-			}
-		}
-	}, [loadProperties])
+	}, [map, user, usersRef, propertyLoadAttempts])
 
-	// Update the useEffect for loading properties when users data changes or map loads
+	// New function to attempt property loading with retries
+	const attemptLoadProperties = useCallback(() => {
+		const success = loadProperties()
+		
+		if (!success && propertyLoadAttempts < maxPropertyLoadAttempts) {
+			console.log(`Property loading attempt ${propertyLoadAttempts + 1} failed, retrying in 500ms...`)
+			setTimeout(() => {
+				setPropertyLoadAttempts(prev => prev + 1)
+			}, 500)
+		} else if (success) {
+			console.log('Property loading successful')
+			setPropertyLoadAttempts(0)
+		} else {
+			console.warn(`Failed to load properties after ${maxPropertyLoadAttempts} attempts`)
+		}
+	}, [loadProperties, propertyLoadAttempts, maxPropertyLoadAttempts])
+
+	// Trigger property loading attempts when attempt counter changes
+	useEffect(() => {
+		if (propertyLoadAttempts > 0) {
+			attemptLoadProperties()
+		}
+	}, [propertyLoadAttempts, attemptLoadProperties])
+
+	// More robust useEffect for loading properties when map and data are ready
 	useEffect(() => {
 		if (map.current && styleLoaded && usersRef.current && Object.keys(usersRef.current).length > 0) {
 			console.log('Map and users data ready - loading properties from useEffect')
-			// Add a small delay to ensure the map is fully ready
+			// Try multiple times with increasing delays to ensure properties load
+			loadProperties() // First immediate attempt
+			
+			// Second attempt after 500ms
 			setTimeout(() => {
+				console.log('Second property loading attempt')
 				loadProperties()
-			}, 300)
+				
+				// Third attempt after another second
+				setTimeout(() => {
+					console.log('Third property loading attempt')
+					loadProperties()
+				}, 1000)
+			}, 500)
 		}
 	}, [usersRef, styleLoaded, loadProperties])
 
-	// Update the useEffect for loading properties after a purchase
+	// Add a more robust style-loaded detection
 	useEffect(() => {
-		if (user && mapInstance && styleLoaded && Object.keys(usersRef.current || {}).length > 0) {
-			console.log('User logged in or changed, refreshing properties')
-			loadProperties()
+		if (map.current && !styleLoaded) {
+			const checkStyleLoaded = () => {
+				if (map.current?.isStyleLoaded()) {
+					console.log('Style fully loaded from style checker')
+					setStyleLoaded(true)
+				} else {
+					console.log('Style not yet loaded, checking again in 100ms')
+					setTimeout(checkStyleLoaded, 100)
+				}
+			}
+			
+			checkStyleLoaded()
+			
+			// Listen for style-related events that might indicate the style is loaded
+			const mapRef = map.current;
+			
+			const styleDataHandler = () => {
+				if (mapRef.isStyleLoaded()) {
+					console.log('Style loaded from styledata event')
+					setStyleLoaded(true)
+				}
+			};
+			
+			mapRef.on('styledata', styleDataHandler);
+			
+			// Cleanup function
+			return () => {
+				// Either the component unmounted or the style loaded
+				// Try to remove the listener if the map ref is still valid
+				if (mapRef) {
+					try {
+						// Explicitly cast to the correct type
+						(mapRef as mapboxgl.Map).off('styledata', styleDataHandler);
+					} catch (e) {
+						console.warn('Could not remove styledata handler:', e);
+					}
+				}
+			};
 		}
-	}, [user, mapInstance, styleLoaded, loadProperties])
+	}, [map, styleLoaded])
+
+	// Add a data refresher on window focus to handle returning to tab
+	useEffect(() => {
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible' && map.current && styleLoaded && user) {
+				console.log('Window gained focus, refreshing data...')
+				fetchUsers().then(() => {
+					setTimeout(() => {
+						console.log('Loading properties after visibility change')
+						loadProperties()
+					}, 200)
+				})
+			}
+		}
+		
+		// Force property loading when the page is loaded/refreshed
+		const handlePageLoad = () => {
+			console.log('Page loaded or refreshed - forcing property load')
+			if (map.current && styleLoaded) {
+				fetchUsers().then(() => {
+					// Try loading properties multiple times with increasing delays
+					setTimeout(() => loadProperties(), 300)
+					setTimeout(() => loadProperties(), 1000)
+					setTimeout(() => loadProperties(), 2000)
+				})
+			}
+		}
+		
+		document.addEventListener('visibilitychange', handleVisibilityChange)
+		// Use the 'load' event to detect when the page is fully loaded
+		window.addEventListener('load', handlePageLoad)
+		
+		return () => {
+			document.removeEventListener('visibilitychange', handleVisibilityChange)
+			window.removeEventListener('load', handlePageLoad)
+		}
+	}, [fetchUsers, map, styleLoaded, user, loadProperties])
+
+	// Improved refreshPropertyDisplay with retry
+	const refreshPropertyDisplay = useCallback(() => {
+		console.log('Refreshing property display')
+		
+		// First reload users data, then properties
+		fetchUsers().then(() => {
+			// Load properties
+			const success = loadProperties()
+			
+			// If direct loading failed, try again after a delay
+			if (!success) {
+				console.log('First property load attempt failed, retrying...')
+				setTimeout(() => {
+					loadProperties()
+				}, 1000)
+			}
+		}).catch(err => {
+			console.error('Error refreshing user data:', err)
+		})
+	}, [fetchUsers, loadProperties])
 
 	// Function to handle save property details
 	const handleSavePropertyDetails = async () => {
@@ -1081,16 +1167,24 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Function to handle property purchase
 	const handleBuyListedProperty = async () => {
 		if (!selectedProperty || !user) return
+		console.log('selectedProperty', selectedProperty)
+		console.log('user', user)
 		
 		try {
 			setIsLoading(true)
 			
-			// Check user tokens
-			const userData = usersRef.current[user.uid]
-			if (!userData) {
+			// Directly fetch the current user data from API instead of relying on local state
+			const userResponse = await fetch(`${API_URL}/users/profile`, {
+				headers: {
+					'Firebase-UID': user.uid
+				}
+			})
+			console.log('userResponse', userResponse)
+			
+			if (!userResponse.ok) {
 				toast({
 					title: 'Error',
-					description: 'User data not found',
+					description: 'Could not retrieve your user data. Please try again later.',
 					status: 'error',
 					duration: 2000,
 					isClosable: true,
@@ -1098,6 +1192,16 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				return
 			}
 			
+			// Get fresh user data directly from API
+			const userData = await userResponse.json()
+			console.log('Fresh user data from API:', userData)
+			
+			// Update local user data
+			if (usersRef.current) {
+				usersRef.current[user.uid] = userData
+			}
+			
+			// Check if user has enough tokens
 			if (userData.tokens < (selectedProperty.salePrice || 0)) {
 				toast({
 					title: 'Insufficient Tokens',
@@ -1109,61 +1213,21 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				return
 			}
 			
-			// Implement a transfer property endpoint in your API
-			// For now we'll simulate it with current API endpoints
-			
-			// 1. Deduct tokens from buyer (current user)
-			const updateBuyerResponse = await fetch(`${API_URL}/users/update`, {
-				method: 'PUT',
+			// Make API call to purchase the property
+			const purchaseResponse = await fetch(`${API_URL}/properties/${selectedProperty.id}/buy`, {
+				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
 					'Firebase-UID': user.uid
-				},
-				body: JSON.stringify({
-					tokens: userData.tokens - (selectedProperty.salePrice || 0)
-				})
-			})
-			
-			if (!updateBuyerResponse.ok) {
-				throw new Error('Failed to update buyer tokens')
-			}
-			
-			// 2. Add tokens to seller
-			const sellerData = usersRef.current[selectedProperty.owner]
-			if (sellerData) {
-				const updateSellerResponse = await fetch(`${API_URL}/users/update`, {
-					method: 'PUT',
-					headers: {
-						'Content-Type': 'application/json',
-						'Firebase-UID': selectedProperty.owner
-					},
-					body: JSON.stringify({
-						tokens: sellerData.tokens + (selectedProperty.salePrice || 0)
-					})
-				})
-				
-				if (!updateSellerResponse.ok) {
-					throw new Error('Failed to update seller tokens')
 				}
-			}
-			
-			// 3. Update property ownership
-			const propertyResponse = await fetch(`${API_URL}/properties/${selectedProperty.id}`, {
-				method: 'PUT',
-				headers: {
-					'Content-Type': 'application/json',
-					'Firebase-UID': user.uid
-				},
-				body: JSON.stringify({
-					owner: user.uid,
-					forSale: false
-				})
 			})
 			
-			if (!propertyResponse.ok) {
-				throw new Error('Failed to update property ownership')
+			if (!purchaseResponse.ok) {
+				const errorData = await purchaseResponse.json().catch(() => ({}))
+				throw new Error(errorData.message || 'Failed to purchase property')
 			}
 			
+			// Property purchase successful
 			toast({
 				title: 'Success',
 				description: 'Property purchased successfully',
@@ -1517,74 +1581,33 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		try {
 			setIsLoading(true)
 			
-			// Ensure we have the latest users data
-			await fetchUsers()
+			// Directly fetch latest user data from API
+			const response = await fetch(`${API_URL}/users/profile`, {
+				headers: {
+					'Firebase-UID': user.uid
+				}
+			})
 			
-			// Check if user profile exists in the current data
-			let userProfile = usersRef.current[user.uid]
-			
-			if (!userProfile) {
-				console.log('User profile not found, checking API directly...')
-				
-				const response = await fetch(`${API_URL}/users/profile`, {
-					headers: {
-						'Firebase-UID': user.uid
-					}
-				})
-				
-				if (!response.ok) {
-					if (response.status === 404 || response.status === 401) {
-						console.log('Creating new user profile...')
-						// Create user if not found
-						const createResponse = await fetch(`${API_URL}/users/create`, {
-							method: 'POST',
-							headers: {
-								'Content-Type': 'application/json'
-							},
-							body: JSON.stringify({
-								uid: user.uid,
-								email: user.email || 'unknown@example.com',
-								name: user.displayName || 'User'
-							})
-						})
-						
-						if (!createResponse.ok) {
-							throw new Error('Failed to create user profile')
-						}
-						
-						// Fetch the newly created user directly from API
-						const newUserResponse = await fetch(`${API_URL}/users/profile`, {
-							headers: {
-								'Firebase-UID': user.uid
-							}
-						})
-						
-						if (!newUserResponse.ok) {
-							throw new Error('Failed to fetch newly created user profile')
-						}
-						
-						userProfile = await newUserResponse.json()
-						
-						// Also update global users data
-						await fetchUsers()
-					} else {
-						throw new Error('Failed to retrieve user profile')
-					}
-				} else {
-					// User exists in API but not in our local state
-					userProfile = await response.json()
-					await fetchUsers()
+			// Handle user not found in API
+			if (!response.ok) {
+				return
+			} else {
+				// User exists in API, get the data and update local state
+				const userProfile = await response.json()
+				if (usersRef.current) {
+					usersRef.current[user.uid] = userProfile
 				}
 			}
 			
-			// Now check if we have a valid user profile
+			// Now get the latest user data (from our local state which we just updated)
+			const userProfile = usersRef.current?.[user.uid]
 			if (!userProfile) {
-				throw new Error('User profile not found after creation')
+				throw new Error('Failed to retrieve user profile after updates')
 			}
 			
 			console.log('Working with user profile:', userProfile)
 			
-			// At this point we should have a valid user profile
+			// Calculate total cost
 			const totalCost = selectedCellArray.length * propertyPrice
 			if (userProfile.tokens < totalCost) {
 				toast({
@@ -1607,25 +1630,16 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				cells: selectedCellArray,
 				price: totalCost, // Initial purchase price (could be made resellable later)
 			}
-			
-			console.log('Buying property with data:', propertyData)
-			
-			// Deduct tokens for purchase
-			await deductToken(user.uid, totalCost)
-			
-			// Save property to user's properties using the new API endpoint
-			const propertyResponse = await fetch(`${API_URL}/properties`, {
+			const purchaseResponse = await fetch(`${API_URL}/properties/unallocated/buy`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
 					'Firebase-UID': user.uid
 				},
-				body: JSON.stringify(propertyData)
+				body: JSON.stringify(propertyData),
 			})
 			
-			if (!propertyResponse.ok) {
-				throw new Error('Failed to create property')
-			}
+			console.log('purchaseResponse', purchaseResponse)
 			
 			toast({
 				title: 'Success',
@@ -1703,6 +1717,124 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			loadProperties()
 		}
 	}, [user, mapInstance, styleLoaded, loadProperties])
+
+	// Add a dedicated effect for initial mount to load properties
+	useEffect(() => {
+		// This effect runs once on component mount
+		console.log('Component mounted - scheduling initial property load');
+		
+		// Wait a moment for everything to initialize
+		const initialLoadTimeout = setTimeout(() => {
+			if (map.current && map.current.isStyleLoaded()) {
+				console.log('Running initial property load');
+				fetchUsers().then(() => {
+					loadProperties();
+				});
+			} else {
+				console.log('Map not ready for initial property load');
+			}
+		}, 1500);
+		
+		return () => {
+			clearTimeout(initialLoadTimeout);
+		};
+	}, []); // Empty dependency array ensures this only runs once on mount
+
+	// Add a function to update the user tokens display
+	const updateUserTokensDisplay = useCallback(async () => {
+		if (!user) return;
+		
+		try {
+			// Get the latest user data from API
+			const response = await fetch(`${API_URL}/users/profile`, {
+				headers: {
+					'Firebase-UID': user.uid
+				}
+			});
+			
+			if (response.ok) {
+				const userData = await response.json();
+				
+				// Update local state
+				if (usersRef.current) {
+					usersRef.current[user.uid] = userData;
+					// Force a re-render (you can use a state variable if needed)
+					console.log('Updated user tokens display:', userData.tokens);
+				}
+			}
+		} catch (error) {
+			console.error('Error updating user tokens display:', error);
+		}
+	}, [user]);
+
+	// Call the update function periodically
+	useEffect(() => {
+		if (!user) return;
+		
+		// Update once on mount
+		updateUserTokensDisplay();
+		
+		// Then set up interval to refresh every 30 seconds
+		const intervalId = setInterval(() => {
+			updateUserTokensDisplay();
+		}, 30000);
+		
+		return () => {
+			clearInterval(intervalId);
+		};
+	}, [user, updateUserTokensDisplay]);
+
+	// Also update user tokens after property operations
+	useEffect(() => {
+		// Listen for modal close events to refresh user data
+		const refreshAfterModal = () => {
+			if (!isPropertyModalOpen && user) {
+				// Modal was just closed, refresh user data
+				setTimeout(() => {
+					updateUserTokensDisplay();
+				}, 500);
+			}
+		};
+		
+		refreshAfterModal();
+	}, [isPropertyModalOpen, user, updateUserTokensDisplay]);
+
+	// Add a direct user data refresh when user logs in
+	useEffect(() => {
+		if (user) {
+			console.log('User logged in, immediately refreshing user data');
+			
+			// Try to fetch user data immediately when user is available
+			const fetchUserData = async () => {
+				try {
+					const response = await fetch(`${API_URL}/users/profile`, {
+						headers: {
+							'Firebase-UID': user.uid
+						}
+					});
+					
+					if (response.ok) {
+						const userData = await response.json();
+						console.log('Direct user data fetch successful:', userData);
+						
+						// Update local state
+						if (usersRef.current) {
+							usersRef.current[user.uid] = userData;
+						}
+						
+						// Also do a full refresh of all users
+						fetchUsers();
+					} else if (response.status === 404) {
+						console.log('User not found in API, will be created by ensureUserProfile');
+					}
+				} catch (error) {
+					console.error('Error in direct user data fetch:', error);
+				}
+			};
+			
+			fetchUserData();
+		}
+	}, [user, fetchUsers]);
 
 	return (
 		<>

@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
 	FunctionComponent,
 	ReactElement,
@@ -170,15 +171,9 @@ export const NavBar: FunctionComponent = (): ReactElement => {
 					justifyContent={isExpanded ? 'flex-start' : 'center'}
 					width="100%"
 				>
-					{isExpanded ? (
-						<Text fontSize="xl" fontWeight="bold" mb={2}>
-							MapBox App
-						</Text>
-					) : (
-						<Text fontSize="xl" fontWeight="bold" mb={2}>
-							MB
-						</Text>
-					)}
+					<Text fontSize="xs" color="gray.500" mb={2}>
+						Version 0.0.1
+					</Text>
 				</Flex>
 
 				<Divider />
@@ -205,25 +200,6 @@ export const NavBar: FunctionComponent = (): ReactElement => {
 						{isExpanded && <Text>Home</Text>}
 					</Link>
 
-					<Link
-						as={ReactRouterLink}
-						to="/settings"
-						display="flex"
-						alignItems="center"
-						justifyContent={isExpanded ? 'flex-start' : 'center'}
-						p={2}
-						borderRadius="md"
-						_hover={{
-							bg: colorMode === 'light' ? 'gray.100' : 'gray.700',
-						}}
-					>
-						<Icon
-							as={FaCog}
-							fontSize="20px"
-							mr={isExpanded ? 3 : 0}
-						/>
-						{isExpanded && <Text>Settings</Text>}
-					</Link>
 				</VStack>
 
 				{/* Spacer to push content to bottom */}
@@ -503,13 +479,6 @@ export const NavBar: FunctionComponent = (): ReactElement => {
 							</Tooltip>
 						))}
 					</VStack>
-				)}
-
-				{/* Environment Info (if needed) */}
-				{isExpanded && import.meta.env.VITE_EXAMPLE && (
-					<Text fontSize="xs" color="gray.500" mb={2}>
-						{import.meta.env.VITE_EXAMPLE}
-					</Text>
 				)}
 
 				{/* Theme Switcher */}
