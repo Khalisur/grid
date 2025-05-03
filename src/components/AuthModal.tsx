@@ -71,7 +71,7 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 					
 					
 					// Get the user's actual ID (not uid) that JSON Server uses
-					const response = await fetch(`${API_URL}/users?uid=${user.uid}`);
+					const response = await fetch(`${API_URL}/users/profile`);
 					const existingUsers = await response.json();
 					
 					if (existingUsers && existingUsers.length > 0) {
@@ -114,7 +114,7 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 
 			// Double check against the API directly
 			const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-			const checkResponse = await fetch(`${API_URL}/users?uid=${user.uid}`);
+			const checkResponse = await fetch(`${API_URL}/users/profile`);
 			const existingUsers = await checkResponse.json();
 			
 			if (existingUsers && existingUsers.length > 0) {
