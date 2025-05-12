@@ -224,9 +224,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	}, [users])
 
 	// Function to check if a cell is already owned by any user
-	const isCellAlreadyOwned = useCallback((cellKey: string): boolean => {
+	const isCellAlreadyOwned = useCallback(async (cellKey: string): Promise<boolean> => {
+		// First try to check using local data
 		const currentUsers = usersRef.current
-		if (!currentUsers || Object.keys(currentUsers).length === 0) return false
+		if (!currentUsers || Object.keys(currentUsers).length === 0) {
+			return false
+		}
 		
 		// Check all users and their properties
 		for (const userData of Object.values(currentUsers)) {
@@ -242,7 +245,65 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			}
 		}
 		
+		// If not found locally, make a direct check to the API
+		try {
+			const response = await fetch(`${API_URL}/properties/cell/${cellKey}/check`)
+			if (response.ok) {
+				const result = await response.json()
+				return !!result.isOwned
+			}
+		} catch (error) {
+			console.error(`Error checking cell ownership for ${cellKey}:`, error)
+		}
+		
 		return false
+	}, [])
+
+	// Function to check if multiple cells are already owned (with batch processing)
+	const checkMultipleCellsOwnership = useCallback(async (cells: string[]): Promise<string[]> => {
+		if (!cells.length) return []
+		
+		try {
+			// Try to use the bulk check API if available
+			const response = await fetch(`${API_URL}/properties/cells/check`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ cells })
+			})
+			
+			if (response.ok) {
+				const result = await response.json()
+				return result.ownedCells || []
+			}
+			
+			// Fallback to local checking if API fails
+			const ownedCells: string[] = []
+			const currentUsers = usersRef.current
+			
+			if (currentUsers && Object.keys(currentUsers).length > 0) {
+				for (const cell of cells) {
+					for (const userData of Object.values(currentUsers)) {
+						if (!userData.properties) continue
+						
+						const isOwned = userData.properties.some(property => 
+							property.cells && property.cells.includes(cell)
+						)
+						
+						if (isOwned) {
+							ownedCells.push(cell)
+							break
+						}
+					}
+				}
+			}
+			
+			return ownedCells
+		} catch (error) {
+			console.error('Error checking multiple cells ownership:', error)
+			return []
+		}
 	}, [])
 
 	useEffect(() => {
@@ -1312,7 +1373,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		const mouseDownPos = { x: e.originalEvent.clientX, y: e.originalEvent.clientY }
 		
 		// Define handler for mouseup to determine if this was a click or drag
-		const handleMouseUp = (upEvent: MouseEvent) => {
+		const handleMouseUp = async (upEvent: MouseEvent) => {
 			// Remove listener since we only need it once
 			document.removeEventListener('mouseup', handleMouseUp)
 			
@@ -1328,8 +1389,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			if (distance < 5 && duration < 300) {
 				const cellKey = getCellKey(e.lngLat.lng, e.lngLat.lat)
 				
-				// Check if the cell is already owned
-				if (isCellAlreadyOwned(cellKey)) {
+				// Check if the cell is already owned asynchronously
+				const isOwned = await isCellAlreadyOwned(cellKey)
+				if (isOwned) {
 					return
 				}
 				
@@ -1359,13 +1421,34 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 		const cellKey = getCellKey(e.lngLat.lng, e.lngLat.lat)
 
-		// Don't add already owned cells to selection
-		if (!isCellAlreadyOwned(cellKey)) {
+		// Don't add already owned cells to selection - using an immediate check
+		// For performance reasons, we'll just check local data without API lookup during mouse move
+		let isLocallyOwned = false;
+		const currentUsers = usersRef.current;
+		
+		if (currentUsers) {
+			for (const userData of Object.values(currentUsers)) {
+				if (!userData.properties) continue;
+				
+				for (const property of userData.properties) {
+					if (!property.cells) continue;
+					
+					if (property.cells.includes(cellKey)) {
+						isLocallyOwned = true;
+						break;
+					}
+				}
+				
+				if (isLocallyOwned) break;
+			}
+		}
+		
+		if (!isLocallyOwned) {
 			// Add cell to selection on hover only if in selection mode and not already owned
 			selectedCells.current.add(cellKey)
 			updateSelection()
 		}
-	}, [isCellAlreadyOwned, updateSelection])
+	}, [updateSelection])
 
 	// Initialize map
 	useEffect(() => {
@@ -1724,48 +1807,50 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			return
 		}
 		
-		// Check if any cells are already owned
-		const ownedCells = selectedCellArray.filter(cell => isCellAlreadyOwned(cell))
-		if (ownedCells.length > 0) {
-			toast({
-				title: 'Error',
-				description: `${ownedCells.length} of the selected cells are already owned and cannot be purchased`,
-				status: 'error',
-				duration: 3000,
-				isClosable: true,
-			})
-			return
-		}
-
-		// Check for user profile with the new API
+		// Show loading state immediately
+		setIsLoading(true)
+		
 		try {
-			setIsLoading(true)
+			// Use the bulk cell checking method instead of individual checks
+			const ownedCells = await checkMultipleCellsOwnership(selectedCellArray)
+			
+			if (ownedCells.length > 0) {
+				toast({
+					title: 'Error',
+					description: `${ownedCells.length} of the selected cells are already owned and cannot be purchased`,
+					status: 'error',
+					duration: 3000,
+					isClosable: true,
+				})
+				setIsLoading(false)
+				return
+			}
 			
 			// Directly fetch latest user data from API
 			const response = await fetchWithAuth(`${API_URL}/users/profile`)
 			
 			// Handle user not found in API
 			if (!response.ok) {
+				setIsLoading(false)
 				return
-			} else {
-				// User exists in API, get the data and update local state
-				const userProfile = await response.json()
-				if (usersRef.current) {
-					usersRef.current[user.uid] = userProfile
-				}
+			}
+			
+			// User exists in API, get the data and update local state
+			const userProfile = await response.json()
+			if (usersRef.current) {
+				usersRef.current[user.uid] = userProfile
 			}
 			
 			// Now get the latest user data (from our local state which we just updated)
-			const userProfile = usersRef.current?.[user.uid]
-			if (!userProfile) {
+			if (!usersRef.current?.[user.uid]) {
 				throw new Error('Failed to retrieve user profile after updates')
 			}
 			
-			console.log('Working with user profile:', userProfile)
+			console.log('Working with user profile:', usersRef.current[user.uid])
 			
 			// Calculate total cost
 			const totalCost = selectedCellArray.length * propertyPrice
-			if (userProfile.tokens < totalCost) {
+			if (usersRef.current[user.uid].tokens < totalCost) {
 				toast({
 					title: 'Error',
 					description: `Insufficient tokens. You need ${totalCost} tokens to buy this property`,
@@ -1773,6 +1858,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					duration: 3000,
 					isClosable: true,
 				})
+				setIsLoading(false)
 				return
 			}
 			
@@ -1786,6 +1872,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				cells: selectedCellArray,
 				price: totalCost, // Initial purchase price (could be made resellable later)
 			}
+			
+			// Make the API call to purchase the property
 			const purchaseResponse = await fetchWithAuth(`${API_URL}/properties/unallocated/buy`, {
 				method: 'POST',
 				headers: {
@@ -1793,6 +1881,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				},
 				body: JSON.stringify(propertyData),
 			})
+			
+			if (!purchaseResponse.ok) {
+				const errorText = await purchaseResponse.text().catch(() => 'Unknown error');
+				throw new Error(`Purchase failed: ${errorText}`);
+			}
 			
 			console.log('purchaseResponse', purchaseResponse)
 			
