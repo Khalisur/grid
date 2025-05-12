@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable prettier/prettier */
 import { create } from 'zustand'
+import { fetchWithAuth } from '../firebase/authUtils'
 
 // New property interface
 export interface Property {
@@ -56,32 +57,29 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			if (userIds.length === 0) {
 				// If no users loaded yet, try to get properties
 				const propsResponse = await fetch(`${API_URL}/properties`);
+				const properties = await propsResponse.json();
+				console.log('properties----->', properties, propsResponse.ok)
+
 				if (propsResponse.ok) {
-					const properties = await propsResponse.json();
-					// Extract unique user IDs from properties
-					const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))];
-					
-					// Load user data for each unique owner
-					const usersData: Record<string, UserData> = {};
-					for (const uid of uniqueUserIds) {
-						if (typeof uid === 'string') { // Check that uid is a string
-							try {
-								const userResponse = await fetch(`${API_URL}/users/profile`, {
-									headers: {
-										'Firebase-UID': uid
-									}
-								});
-								if (userResponse.ok) {
-									const userData = await userResponse.json();
-									usersData[uid] = userData;
-								}
-							} catch (error) {
-								console.error(`Error fetching user ${uid}:`, error);
-							}
+					console.log('propsResponse----->', properties)
+
+					// We'll fetch all users in a single API call instead of looping
+					try {
+						console.log('Fetching all users at once')
+						const usersResponse = await fetch(`${API_URL}/users/all`);
+						
+						if (usersResponse.ok) {
+							const allUsers = await usersResponse.json();
+							console.log('All users data:', allUsers);
+							
+							// Structure the data properly - allUsers should be an object with user IDs as keys
+							set({ users: allUsers });
+						} else {
+							console.error('Failed to fetch users:', usersResponse.status);
 						}
+					} catch (error) {
+						console.error('Error fetching all users:', error);
 					}
-					
-					set({ users: usersData });
 				}
 				return;
 			}
@@ -90,11 +88,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			const updatedUsers: Record<string, UserData> = {};
 			for (const uid of userIds) {
 				try {
-					const response = await fetch(`${API_URL}/users/profile`, {
-						headers: {
-							'Firebase-UID': uid
-						}
-					});
+					const response = await fetchWithAuth(`${API_URL}/users/profile`);
 					
 					if (response.ok) {
 						const userData = await response.json();
@@ -118,11 +112,8 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			console.log('API URL:', `${API_URL}/users/create`);
 
 			// Use the new create user endpoint
-			const response = await fetch(`${API_URL}/users/create`, {
+			const response = await fetchWithAuth(`${API_URL}/users/create`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
 				body: JSON.stringify({
 					uid: user.uid,
 					email: user.email,
@@ -158,12 +149,8 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 	updateUserProperty: async (uid, property) => {
 		try {
 			// Use the new properties endpoint
-			const response = await fetch(`${API_URL}/properties/${property.id}`, {
+			const response = await fetchWithAuth(`${API_URL}/properties/${property.id}`, {
 				method: 'PUT',
-				headers: {
-					'Content-Type': 'application/json',
-					'Firebase-UID': uid
-				},
 				body: JSON.stringify(property),
 			});
 			
@@ -181,11 +168,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 	deductToken: async (uid, amount = 1) => {
 		try {
 			// First, get the current user profile
-			const response = await fetch(`${API_URL}/users/profile`, {
-				headers: {
-					'Firebase-UID': uid
-				}
-			});
+			const response = await fetchWithAuth(`${API_URL}/users/profile`);
 			
 			if (!response.ok) {
 				console.error('User not found with uid:', uid);
@@ -200,12 +183,8 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			}
 
 			// Update the user's tokens
-			const updateResponse = await fetch(`${API_URL}/users/update`, {
+			const updateResponse = await fetchWithAuth(`${API_URL}/users/update`, {
 				method: 'PUT',
-				headers: {
-					'Content-Type': 'application/json',
-					'Firebase-UID': uid
-				},
 				body: JSON.stringify({
 					tokens: userData.tokens - amount,
 				}),
@@ -225,11 +204,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 	addToken: async (uid, amount) => {
 		try {
 			// First, get the current user profile
-			const response = await fetch(`${API_URL}/users/profile`, {
-				headers: {
-					'Firebase-UID': uid
-				}
-			});
+			const response = await fetchWithAuth(`${API_URL}/users/profile`);
 			
 			if (!response.ok) {
 				console.error('User not found with uid:', uid);
@@ -239,12 +214,8 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			const userData = await response.json();
 
 			// Update the user's tokens
-			const updateResponse = await fetch(`${API_URL}/users/update`, {
+			const updateResponse = await fetchWithAuth(`${API_URL}/users/update`, {
 				method: 'PUT',
-				headers: {
-					'Content-Type': 'application/json',
-					'Firebase-UID': uid
-				},
 				body: JSON.stringify({
 					tokens: userData.tokens + amount,
 				}),
@@ -267,7 +238,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			// But for now we'll implement it in steps
 			
 			// 1. Deduct tokens from buyer
-			const buyerResponse = await fetch(`${API_URL}/users/profile`, {
+			const buyerResponse = await fetchWithAuth(`${API_URL}/users/profile`, {
 				headers: {
 					'Firebase-UID': toUserId
 				}
@@ -284,7 +255,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			}
 			
 			// Update buyer tokens
-			const updateBuyerResponse = await fetch(`${API_URL}/users/update`, {
+			const updateBuyerResponse = await fetchWithAuth(`${API_URL}/users/update`, {
 				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',
@@ -300,7 +271,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			}
 			
 			// 2. Add tokens to seller
-			const sellerResponse = await fetch(`${API_URL}/users/profile`, {
+			const sellerResponse = await fetchWithAuth(`${API_URL}/users/profile`, {
 				headers: {
 					'Firebase-UID': fromUserId
 				}
@@ -309,7 +280,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			if (sellerResponse.ok) {
 				const seller = await sellerResponse.json();
 				
-				const updateSellerResponse = await fetch(`${API_URL}/users/update`, {
+				const updateSellerResponse = await fetchWithAuth(`${API_URL}/users/update`, {
 					method: 'PUT',
 					headers: {
 						'Content-Type': 'application/json',
@@ -322,7 +293,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 				
 				if (!updateSellerResponse.ok) {
 					// Rollback buyer tokens if seller update fails
-					await fetch(`${API_URL}/users/update`, {
+					await fetchWithAuth(`${API_URL}/users/update`, {
 						method: 'PUT',
 						headers: {
 							'Content-Type': 'application/json',
@@ -338,7 +309,7 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 			}
 			
 			// 3. Transfer property ownership
-			const propertyResponse = await fetch(`${API_URL}/properties/${propertyId}`, {
+			const propertyResponse = await fetchWithAuth(`${API_URL}/properties/${propertyId}`, {
 				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',

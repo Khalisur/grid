@@ -53,6 +53,7 @@ import { useUserStore } from '../stores/userStore'
 import { useAuthStore } from '../stores/authStore'
 import { v4 as uuidv4 } from 'uuid'
 import { Property } from '../stores/userStore'
+import { fetchWithAuth } from '../firebase/authUtils'
 
 // Set Mapbox access token
 mapboxgl.accessToken =
@@ -158,11 +159,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				console.log('Current user:', user)
 				
 				// Check if the user already exists in the API but not in our local state
-				const checkResponse = await fetch(`${API_URL}/users/profile`, {
-					headers: {
-						'Firebase-UID': user.uid
-					}
-				})
+				const checkResponse = await fetchWithAuth(`${API_URL}/users/profile`)
 				
 				if (checkResponse.ok) {
 					// User exists in API
@@ -174,7 +171,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					console.log('User does not exist in API, creating new user profile...')
 					
 					// Create new user with the POST create user endpoint
-					const createResponse = await fetch(`${API_URL}/users/create`, {
+					const createResponse = await fetchWithAuth(`${API_URL}/users/create`, {
 						method: 'POST',
 						headers: {
 							'Content-Type': 'application/json'
@@ -254,6 +251,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 	// Debug function to inspect users data structure
 	useEffect(() => {
+		console.log('users---------->', users)
 		if (users && Object.keys(users).length > 0) {
 			console.log('=== DEBUG: USERS DATA STRUCTURE ===')
 			Object.entries(users).forEach(([uid, userData]) => {
@@ -350,11 +348,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			console.log('Saving property with data:', propertyData)
 			
 			// Save property to user's properties using the new API endpoint
-			const propertyResponse = await fetch(`${API_URL}/properties`, {
+			const propertyResponse = await fetchWithAuth(`${API_URL}/properties`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'Firebase-UID': user.uid
 				},
 				body: JSON.stringify(propertyData)
 			})
@@ -774,8 +771,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			return false
 		}
 
-		console.log(`Starting property loading process... (attempt ${propertyLoadAttempts + 1})`)
-		console.log('Users data available:', Object.keys(usersRef.current).length, 'users')
+		
 		
 		try {
 			// Create features for all properties
@@ -785,6 +781,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Count properties per user for debugging
 			let totalPropertyCount = 0
+
 			Object.entries(usersRef.current).forEach(([uid, userData]) => {
 				const propCount = userData.properties?.length || 0
 				totalPropertyCount += propCount
@@ -845,7 +842,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 									owner: property.owner,
 									price: property.price,
 									cellCount: property.cells.length,
-									isOwnProperty: user && property.owner === user.uid,
+									isOwnProperty: !!(user && property.owner === user.uid), // Force boolean with !!
 									cellKey: cellKey,
 									forSale: property.forSale || false,
 									salePrice: property.salePrice || 0,
@@ -877,7 +874,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				setTimeout(async () => {
 					try {
 						console.log('Attempting to repair property loading...')
-						const propsResponse = await fetch(`${API_URL}/properties`)
+						const propsResponse = await fetchWithAuth(`${API_URL}/properties`)
 						
 						if (propsResponse.ok) {
 							const properties = await propsResponse.json()
@@ -891,11 +888,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							for (const uid of uniqueUserIds) {
 								if (typeof uid === 'string') {
 									try {
-										const userResponse = await fetch(`${API_URL}/users/profile`, {
-											headers: {
-												'Firebase-UID': uid
-											}
-										})
+										const userResponse = await fetchWithAuth(`${API_URL}/users/profile`)
 										if (userResponse.ok) {
 											const userData = await userResponse.json()
 											if (usersRef.current) {
@@ -952,6 +945,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						id: PROPERTIES_LAYER_ID,
 						type: 'fill',
 						source: PROPERTIES_SOURCE_ID,
+						layout: {
+							// Always show properties regardless of zoom level
+							visibility: 'visible'
+						},
 						paint: {
 							'fill-opacity': 0.7, // Increased opacity for better visibility
 							'fill-color': [
@@ -1170,12 +1167,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			}
 			
 			// Save to database using the new PUT endpoint
-			const response = await fetch(`${API_URL}/properties/${selectedProperty.id}`, {
+			const response = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}`, {
 				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',
-					'Firebase-UID': user.uid
-				},
+					},
 				body: JSON.stringify({
 					name: propertyName,
 					description: propertyDescription,
@@ -1231,11 +1227,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setIsLoading(true)
 			
 			// Directly fetch the current user data from API instead of relying on local state
-			const userResponse = await fetch(`${API_URL}/users/profile`, {
-				headers: {
-					'Firebase-UID': user.uid
-				}
-			})
+			const userResponse = await fetchWithAuth(`${API_URL}/users/profile`)
 			console.log('userResponse', userResponse)
 			
 			if (!userResponse.ok) {
@@ -1271,13 +1263,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			}
 			
 			// Make API call to purchase the property
-			const purchaseResponse = await fetch(`${API_URL}/properties/${selectedProperty.id}/buy`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'Firebase-UID': user.uid
-				}
-			})
+			const purchaseResponse = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/buy`)
 			
 			if (!purchaseResponse.ok) {
 				const errorData = await purchaseResponse.json().catch(() => ({}))
@@ -1458,6 +1444,58 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			newMap.on('styledata', () => {
 				console.log('Style data event received')
 				checkStyleLoaded()
+				
+				// Also reload properties when style loads
+				if (newMap.isStyleLoaded()) {
+					console.log('Style loaded - refreshing all properties')
+					
+					// Use the same function as map movement to fetch ALL properties
+					setTimeout(() => {
+						// Call the all-properties API to get properties from all users
+						fetch(`${API_URL}/properties`)
+							.then(res => res.json())
+							.then(allProperties => {
+								if (allProperties.length === 0) return
+								
+								console.log(`Fetched ${allProperties.length} properties after style load`)
+								
+								// Group properties by owner to update our users object
+								const propertiesByOwner: Record<string, Property[]> = {}
+								
+								allProperties.forEach((prop: Property) => {
+									if (!propertiesByOwner[prop.owner]) {
+										propertiesByOwner[prop.owner] = []
+									}
+									propertiesByOwner[prop.owner].push(prop)
+								})
+								
+								// Update local user records
+								if (usersRef.current) {
+									Object.keys(propertiesByOwner).forEach(ownerId => {
+										if (!usersRef.current![ownerId]) {
+											// Create placeholder for unknown users
+											usersRef.current![ownerId] = {
+												uid: ownerId,
+												name: `User ${ownerId.substring(0, 6)}...`,
+												email: 'unknown@example.com',
+												tokens: 0,
+												properties: propertiesByOwner[ownerId]
+											}
+										} else {
+											// Update properties for known users
+											usersRef.current![ownerId].properties = propertiesByOwner[ownerId]
+										}
+									})
+								}
+								
+								// Finally load properties to map
+								loadProperties()
+							})
+							.catch(error => {
+								console.error('Error loading properties after style load:', error)
+							})
+					}, 300)
+				}
 			})
 
 			// Add mouse event listeners for selection
@@ -1480,9 +1518,74 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				}, 100)
 			}
 
+			// Add a separate function to refresh ALL properties whenever the map moves
+			// This is key to keeping other users' properties visible
+			const refreshAllProperties = () => {
+				if (!map.current || !map.current.isStyleLoaded()) return
+				
+				console.log('Map moved - refreshing all properties')
+				
+				// Set a timeout to avoid too many requests
+				if (moveEndTimeoutRef.current) {
+					window.clearTimeout(moveEndTimeoutRef.current)
+				}
+				
+				moveEndTimeoutRef.current = window.setTimeout(() => {
+					// Direct API call to get ALL properties
+					fetch(`${API_URL}/properties`)
+						.then(res => res.json())
+						.then(allProperties => {
+							console.log(`Fetched ${allProperties.length} properties from API after map movement`)
+							
+							if (allProperties.length === 0) return
+							
+							// Store all user properties keyed by user ID for our in-memory users
+							const propertiesByOwner: Record<string, Property[]> = {}
+							
+							// Group properties by owner
+							allProperties.forEach((prop: Property) => {
+								if (!propertiesByOwner[prop.owner]) {
+									propertiesByOwner[prop.owner] = []
+								}
+								propertiesByOwner[prop.owner].push(prop)
+							})
+							
+							// Update our local user records with these properties
+							if (usersRef.current) {
+								// For each owner, either update existing user or create placeholder
+								Object.keys(propertiesByOwner).forEach(ownerId => {
+									if (usersRef.current![ownerId]) {
+										// Update existing user's properties
+										usersRef.current![ownerId].properties = propertiesByOwner[ownerId]
+									} else {
+										// Create a placeholder user record for this owner
+										usersRef.current![ownerId] = {
+											uid: ownerId,
+											name: `User ${ownerId.substring(0, 6)}...`, // Placeholder name
+											email: 'unknown@example.com',
+											tokens: 0, // Placeholder
+											properties: propertiesByOwner[ownerId]
+										}
+									}
+								})
+							}
+							
+							// Now load the properties onto the map
+							loadProperties()
+						})
+						.catch(error => {
+							console.error('Error refreshing properties after map movement:', error)
+						})
+				}, 200) // Small delay to batch movements
+			}
+
 			// Update grid on map movement and zoom
 			newMap.on('moveend', debouncedDrawGrid)
 			newMap.on('zoomend', debouncedDrawGrid)
+
+			// Also update properties on map movement
+			newMap.on('moveend', refreshAllProperties)
+			newMap.on('zoomend', refreshAllProperties)
 
 			newMap.on('error', (e: { error: { message?: string } }) => {
 				console.error('Mapbox error:', e)
@@ -1639,11 +1742,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setIsLoading(true)
 			
 			// Directly fetch latest user data from API
-			const response = await fetch(`${API_URL}/users/profile`, {
-				headers: {
-					'Firebase-UID': user.uid
-				}
-			})
+			const response = await fetchWithAuth(`${API_URL}/users/profile`)
 			
 			// Handle user not found in API
 			if (!response.ok) {
@@ -1687,11 +1786,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				cells: selectedCellArray,
 				price: totalCost, // Initial purchase price (could be made resellable later)
 			}
-			const purchaseResponse = await fetch(`${API_URL}/properties/unallocated/buy`, {
+			const purchaseResponse = await fetchWithAuth(`${API_URL}/properties/unallocated/buy`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'Firebase-UID': user.uid
 				},
 				body: JSON.stringify(propertyData),
 			})
@@ -1786,53 +1884,61 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				console.log('Running initial property load');
 				
 				try {
-					// First try to get all properties directly
-					const propsResponse = await fetch(`${API_URL}/properties`);
-					if (propsResponse.ok) {
-						const properties = await propsResponse.json();
-						console.log(`Initial load: Fetched ${properties.length} total properties`);
+					// Then load properties
+					setTimeout(async () => {
+						console.log('Initial load: Loading all properties')
 						
-						// Extract unique user IDs from properties
-						const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))];
-						console.log(`Initial load: Found ${uniqueUserIds.length} unique property owners`);
-						
-						// Load data for each property owner
-						for (const uid of uniqueUserIds) {
-							if (typeof uid === 'string') {
-								try {
-									const userResponse = await fetch(`${API_URL}/users/profile`, {
-										headers: {
-											'Firebase-UID': uid
+						// First get all properties directly from the API
+						try {
+							const propsResponse = await fetch(`${API_URL}/properties`)
+							if (propsResponse.ok) {
+								const allProperties = await propsResponse.json()
+								console.log(`Initial load: Found ${allProperties.length} total properties`)
+								
+								if (allProperties.length > 0) {
+									// Create user mapping for all properties
+									const propertiesByOwner: Record<string, Property[]> = {}
+									
+									// Group properties by owner
+									allProperties.forEach((prop: Property) => {
+										if (!propertiesByOwner[prop.owner]) {
+											propertiesByOwner[prop.owner] = []
 										}
-									});
-									if (userResponse.ok) {
-										const userData = await userResponse.json();
-										console.log(`Initial load: Loaded data for user: ${userData.name}`);
-										// Add to users ref
-										if (usersRef.current) {
-											usersRef.current[uid] = userData;
-										}
+										propertiesByOwner[prop.owner].push(prop)
+									})
+									
+									// Update our local user records with these properties
+									if (usersRef.current) {
+										// For each owner, either update existing user or create placeholder
+										Object.keys(propertiesByOwner).forEach(ownerId => {
+											if (usersRef.current![ownerId]) {
+												// Update existing user's properties
+												usersRef.current![ownerId].properties = propertiesByOwner[ownerId]
+											} else {
+												// Create a placeholder user record for this owner
+												usersRef.current![ownerId] = {
+													uid: ownerId,
+													name: `User ${ownerId.substring(0, 6)}...`, // Placeholder name
+													email: 'unknown@example.com',
+													tokens: 0, // Placeholder
+													properties: propertiesByOwner[ownerId]
+												}
+											}
+										})
 									}
-								} catch (error) {
-									console.error(`Error fetching user ${uid}:`, error);
+									
+									// Now load all properties to the map
+									loadProperties()
 								}
 							}
+						} catch (error) {
+							console.error('Error fetching all properties on initial load:', error)
 						}
 						
-						// Then load properties
-						setTimeout(() => {
-							console.log('Initial load: Loading all properties');
-							loadProperties();
-							
-							// Try again after a delay to ensure all properties load
-							setTimeout(() => loadProperties(), 1000);
-						}, 200);
-					} else {
-						console.warn('Failed to fetch properties in initial load');
-						fetchUsers().then(() => {
-							loadProperties();
-						});
-					}
+						// Try multiple times with increasing delays for reliability
+						setTimeout(() => loadProperties(), 1000)
+						setTimeout(() => loadProperties(), 3000)
+					}, 200)
 				} catch (error) {
 					console.error('Error in initial property load:', error);
 					fetchUsers().then(() => {
@@ -1855,11 +1961,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		
 		try {
 			// Get the latest user data from API
-			const response = await fetch(`${API_URL}/users/profile`, {
-				headers: {
-					'Firebase-UID': user.uid
-				}
-			});
+			const response = await fetchWithAuth(`${API_URL}/users/profile`);
 			
 			if (response.ok) {
 				const userData = await response.json();
@@ -1917,11 +2019,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const fetchUserData = async () => {
 				try {
 					// First, get the current user's data
-					const response = await fetch(`${API_URL}/users/profile`, {
-						headers: {
-							'Firebase-UID': user.uid
-						}
-					});
+					const response = await fetchWithAuth(`${API_URL}/users/profile`);
 					
 					if (response.ok) {
 						const userData = await response.json();
@@ -1946,11 +2044,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							for (const uid of uniqueUserIds) {
 								if (uid !== user.uid && typeof uid === 'string') { // Skip current user, already loaded
 									try {
-										const userResponse = await fetch(`${API_URL}/users/profile`, {
-											headers: {
-												'Firebase-UID': uid
-											}
-										});
+										const userResponse = await fetchWithAuth(`${API_URL}/users/profile`);
 										if (userResponse.ok) {
 											const otherUserData = await userResponse.json();
 											console.log(`Loaded data for user: ${otherUserData.name}`);
@@ -2302,3 +2396,4 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		</>
 	)
 }
+

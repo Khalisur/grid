@@ -18,13 +18,21 @@ import {
 	TabPanel,
 	FormControl,
 	FormLabel,
+	InputGroup,
+	InputRightElement,
+	IconButton,
 } from '@chakra-ui/react'
+import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
 import { auth } from '../firebase/config'
 import {
 	createUserWithEmailAndPassword,
 	signInWithEmailAndPassword,
+	GoogleAuthProvider,
+	signInWithPopup,
+	sendPasswordResetEmail,
 } from 'firebase/auth'
 import { useUserStore } from '../stores/userStore'
+import { fetchWithAuth } from '../firebase/authUtils'
 
 interface AuthModalProps {
 	isOpen: boolean
@@ -36,6 +44,7 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 	const [password, setPassword] = useState('')
 	const [name, setName] = useState('')
 	const [loading, setLoading] = useState(false)
+	const [showPassword, setShowPassword] = useState(false)
 	const toast = useToast()
 	const addUser = useUserStore((state) => state.addUser)
 	const fetchUsers = useUserStore((state) => state.fetchUsers)
@@ -224,6 +233,140 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 		}
 	}
 
+	const handleGoogleSignIn = async () => {
+		console.log('Google sign in started');
+		setLoading(true)
+		const provider = new GoogleAuthProvider()
+		try {
+			const result = await signInWithPopup(auth, provider)
+			const user = result.user
+
+			// First check if this user exists in our database
+			const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+			
+			try {
+				// Check if user exists using the Firebase auth token
+				console.log('Checking if user exists in firebase with UID:', user.uid);
+				const checkResponse = await fetchWithAuth(`${API_URL}/users/profile`);
+				const responseData = await checkResponse.json();
+				console.log('Response data--->:', responseData);
+				
+				// If we get a successful response (not an error message), the user exists
+				if (checkResponse.ok && !responseData.message) {
+					console.log('User exists in database:', responseData);
+					
+					// Update local store and notify user
+					await fetchUsers();
+					toast({
+						title: 'Logged in successfully',
+						description: 'Welcome back!',
+						status: 'success',
+						duration: 3000,
+						isClosable: true,
+					});
+				} else {
+					// User doesn't exist in our database, create them
+					console.log('Creating new user in database for Google user:', user.displayName);
+					
+					// Call addUser to create the user record in the database
+					await addUser({
+						uid: user.uid,
+						email: user.email || '',
+						name: user.displayName || user.email?.split('@')[0] || 'User',
+					});
+					
+					toast({
+						title: 'Account created successfully',
+						description: 'You have been allocated 10 tokens.',
+						status: 'success',
+						duration: 3000,
+						isClosable: true,
+					});
+					
+					// Refresh users to ensure local state is up-to-date
+					await fetchUsers();
+				}
+				onClose();
+			} catch (apiError) {
+				console.error('API error checking/creating user:', apiError);
+				
+				// If API check fails, attempt to create the user anyway as a fallback
+				try {
+					await addUser({
+						uid: user.uid,
+						email: user.email || '',
+						name: user.displayName || user.email?.split('@')[0] || 'User',
+					});
+					
+					toast({
+						title: 'Account created',
+						description: 'Your account has been created',
+						status: 'success',
+						duration: 3000,
+						isClosable: true,
+					});
+					
+					await fetchUsers();
+					onClose();
+				} catch (addUserError) {
+					console.error('Error creating user after API check failed:', addUserError);
+					toast({
+						title: 'Error creating account',
+						description: 'Please try again later',
+						status: 'error',
+						duration: 3000,
+						isClosable: true,
+					});
+				}
+			}
+		} catch (error) {
+			console.error('Google Sign-In error:', error)
+			toast({
+				title: 'Error signing in with Google',
+				description: (error as Error).message,
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const handlePasswordReset = async () => {
+		if (!email) {
+			toast({
+				title: 'Email required',
+				description: 'Please enter your email address to reset your password.',
+				status: 'warning',
+				duration: 3000,
+				isClosable: true,
+			});
+			return;
+		}
+		try {
+			setLoading(true);
+			await sendPasswordResetEmail(auth, email);
+			toast({
+				title: 'Password reset email sent',
+				description: 'Check your inbox for password reset instructions.',
+				status: 'success',
+				duration: 5000,
+				isClosable: true,
+			});
+		} catch (error) {
+			toast({
+				title: 'Error sending reset email',
+				description: (error as Error).message,
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			});
+		} finally {
+			setLoading(false);
+		}
+	};
+
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
 			<ModalOverlay />
@@ -246,14 +389,36 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 											setEmail(e.target.value)
 										}
 									/>
-									<Input
-										type="password"
-										placeholder="Password"
-										value={password}
-										onChange={(e) =>
-											setPassword(e.target.value)
-										}
-									/>
+									<InputGroup size="md">
+										<Input
+											pr="4.5rem"
+											type={showPassword ? 'text' : 'password'}
+											placeholder="Password"
+											value={password}
+											onChange={(e) =>
+												setPassword(e.target.value)
+											}
+										/>
+										<InputRightElement width="4.5rem">
+											<IconButton
+												h="1.75rem"
+												size="sm"
+												onClick={() => setShowPassword(!showPassword)}
+												icon={showPassword ? <ViewOffIcon /> : <ViewIcon />}
+												aria-label={showPassword ? 'Hide password' : 'Show password'}
+											/>
+										</InputRightElement>
+									</InputGroup>
+									<Button
+										variant="link"
+										alignSelf="flex-start"
+										mt={1}
+										mb={2}
+										onClick={handlePasswordReset}
+										disabled={loading}
+									>
+										Forgot Password?
+									</Button>
 									<Button
 										colorScheme="blue"
 										width="full"
@@ -261,6 +426,14 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 										isLoading={loading}
 									>
 										Login
+									</Button>
+									<Button
+										colorScheme="red"
+										width="full"
+										onClick={handleGoogleSignIn}
+										isLoading={loading}
+									>
+										Sign in with Google
 									</Button>
 								</VStack>
 							</TabPanel>
@@ -283,14 +456,26 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 											setEmail(e.target.value)
 										}
 									/>
-									<Input
-										type="password"
-										placeholder="Password"
-										value={password}
-										onChange={(e) =>
-											setPassword(e.target.value)
-										}
-									/>
+									<InputGroup size="md">
+										<Input
+											pr="4.5rem"
+											type={showPassword ? 'text' : 'password'}
+											placeholder="Password"
+											value={password}
+											onChange={(e) =>
+												setPassword(e.target.value)
+											}
+										/>
+										<InputRightElement width="4.5rem">
+											<IconButton
+												h="1.75rem"
+												size="sm"
+												onClick={() => setShowPassword(!showPassword)}
+												icon={showPassword ? <ViewOffIcon /> : <ViewIcon />}
+												aria-label={showPassword ? 'Hide password' : 'Show password'}
+											/>
+										</InputRightElement>
+									</InputGroup>
 									<Button
 										colorScheme="green"
 										width="full"
@@ -298,6 +483,15 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 										isLoading={loading}
 									>
 										Sign Up
+									</Button>
+									<Button
+										mt={2}
+										colorScheme="red"
+										width="full"
+										onClick={handleGoogleSignIn}
+										isLoading={loading}
+									>
+										Sign up with Google
 									</Button>
 								</VStack>
 							</TabPanel>
