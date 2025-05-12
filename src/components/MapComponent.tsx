@@ -310,25 +310,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		fetchUsers()
 	}, [fetchUsers])
 
-	// Debug function to inspect users data structure
-	useEffect(() => {
-		console.log('users---------->', users)
-		if (users && Object.keys(users).length > 0) {
-			console.log('=== DEBUG: USERS DATA STRUCTURE ===')
-			Object.entries(users).forEach(([uid, userData]) => {
-				console.log(`User ${userData.name} (${uid}):`)
-				console.log('  Properties:', userData.properties || 'None')
-				if (userData.properties) {
-					userData.properties.forEach((prop, i) => {
-						console.log(`  Property ${i + 1}:`, prop)
-						console.log(`    ID: ${prop.id}`)
-						console.log(`    Cells: ${prop.cells.length} cells`)
-						console.log(`    Sample cells:`, prop.cells.slice(0, 2))
-					})
-				}
-			})
-		}
-	}, [users])
+
 
 	// Define flyToProperty function here, before it's used
 	const flyToProperty = useCallback((propertyId: string): void => {
@@ -365,100 +347,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		})
 	}, [map, user, usersRef])
 
-	// Function to handle save selection
-	const handleSaveSelection = async () => {
-		if (!user) {
-			toast({
-				title: 'Error',
-				description: 'You must be logged in to save selections',
-				status: 'error',
-				duration: 3000,
-				isClosable: true,
-			})
-			return
-		}
 
-		if (selectedCells.current.size === 0) {
-			toast({
-				title: 'Error',
-				description: 'Please select at least one cell to save',
-				status: 'error',
-				duration: 3000,
-				isClosable: true,
-			})
-			return
-		}
-
-		// Ensure users data is loaded
-		if (!usersRef.current || Object.keys(usersRef.current).length === 0) {
-			await fetchUsers()
-		}
-
-		try {
-			// Create a new property with a unique ID (for saved selections)
-			const propertyId = uuidv4()
-			
-			// Create a property object (free, for saved selections)
-			const propertyData: Property = {
-				id: propertyId,
-				owner: user.uid,
-				cells: Array.from(selectedCells.current),
-				price: 0, // Saved selections are free
-			}
-			
-			console.log('Saving property with data:', propertyData)
-			
-			// Save property to user's properties using the new API endpoint
-			const propertyResponse = await fetchWithAuth(`${API_URL}/properties`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify(propertyData)
-			})
-			
-			if (!propertyResponse.ok) {
-				throw new Error('Failed to create property')
-			}
-			
-			toast({
-				title: 'Success',
-				description: 'Selection saved successfully',
-				status: 'success',
-				duration: 3000,
-				isClosable: true,
-			})
-			
-			// Clear selection after saving
-			selectedCells.current.clear()
-			isSelectionMode.current = false
-			updateSelection()
-			
-			// Reload properties on the map
-			await fetchUsers()
-			
-			// Force property reload with a small delay
-			setTimeout(() => {
-				console.log('Reloading properties after save')
-				loadProperties()
-			}, 500)
-
-			// Add this inside the try block of handleSaveSelection after the setTimeout
-			setTimeout(() => {
-				console.log('Flying to newly saved property')
-				flyToProperty(propertyId)
-			}, 1000)
-		} catch (error) {
-			toast({
-				title: 'Error',
-				description: 'Failed to save selection',
-				status: 'error',
-				duration: 3000,
-				isClosable: true,
-			})
-			console.error('Save selection error:', error)
-		}
-	}
 
 	// Function to update selection
 	const updateSelection = useCallback(() => {
@@ -741,6 +630,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const forSale = propertyFeature.properties?.forSale
 			
 			console.log('Clicked on property:', propertyFeature.properties)
+			console.log('Property feature isOwnProperty flag:', propertyFeature.properties?.isOwnProperty)
+			console.log('Calculated isOwnProperty:', isOwnProperty, 'user.uid:', user?.uid, 'propertyOwner:', propertyOwner)
+			console.log('Do they match?', propertyFeature.properties?.isOwnProperty === isOwnProperty)
+			console.log('Property color should be:', isOwnProperty ? 'green' : (forSale ? 'yellow' : 'red'))
 			
 			// Find property data in user properties
 			let propertyData: Property | null = null
@@ -832,8 +725,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			return false
 		}
 
-		
-		
 		try {
 			// Create features for all properties
 			const allFeatures: GeoJSON.Feature[] = []
@@ -851,6 +742,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			console.log(`Total properties across all users: ${totalPropertyCount}`)
 			
+			// Store the current user ID for comparison
+			const currentUserId = user?.uid
+			console.log('Current user ID for property ownership comparison:', currentUserId || 'Not logged in')
+			
 			// Process all users and their properties
 			Object.values(usersRef.current).forEach(userData => {
 				if (!userData.properties || userData.properties.length === 0) return
@@ -864,7 +759,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						return
 					}
 					
-					console.log(`Processing property ${property.id} with ${property.cells.length} cells`)
+					// Determine if this is the current user's property
+					const isOwn = !!(currentUserId && property.owner === currentUserId)
+					if (isOwn) {
+						console.log(`Processing own property ${property.id} with ${property.cells.length} cells`)
+						console.log(`Property owner: "${property.owner}", Current user: "${currentUserId}"`);
+					}
 					
 					// Instead of creating a MultiPolygon, create individual Polygon features for each cell
 					property.cells.forEach(cellKey => {
@@ -895,7 +795,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								[lng, lat]
 							]]
 							
-							// Create a feature for this cell
+							// Create a feature for this cell - using the isOwn variable calculated above
 							const cellFeature: GeoJSON.Feature = {
 								type: 'Feature',
 								properties: {
@@ -903,7 +803,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 									owner: property.owner,
 									price: property.price,
 									cellCount: property.cells.length,
-									isOwnProperty: !!(user && property.owner === user.uid), // Force boolean with !!
+									isOwnProperty: isOwn, // Use the precalculated value 
 									cellKey: cellKey,
 									forSale: property.forSale || false,
 									salePrice: property.salePrice || 0,
@@ -915,6 +815,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 									type: 'Polygon',
 									coordinates: cellPolygon
 								}
+							}
+							
+							// Debug output for ownership checking
+							if (isOwn) {
+								console.log(`DEBUG: Cell for property ${property.id} with key ${cellKey} SHOULD be green`)
+								console.log(`DEBUG: Owner=${property.owner}, currentUserId=${currentUserId}, match=${property.owner === currentUserId}`)
 							}
 							
 							allFeatures.push(cellFeature)
@@ -989,6 +895,55 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					type: 'FeatureCollection',
 					features: allFeatures
 				})
+				
+				// Also update the color properties each time we update the data
+				// This ensures the correct ownership-based coloring
+				if (map.current.getLayer(PROPERTIES_LAYER_ID)) {
+					// Update fill color based on ownership comparison
+					map.current.setPaintProperty(
+						PROPERTIES_LAYER_ID,
+						'fill-color', 
+						[
+							'case',
+							// Use the isOwnProperty flag directly which is set during property loading
+							['==', ['get', 'isOwnProperty'], true],
+							'#4CAF50', // Green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FFC107', // Yellow for properties for sale
+							'#F44336'  // Red for other properties
+						]
+					);
+					
+					// Update outline color
+					map.current.setPaintProperty(
+						PROPERTIES_LAYER_ID,
+						'fill-outline-color',
+						[
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#2E7D32', // Darker green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FF8F00', // Darker yellow for properties for sale
+							'#B71C1C'  // Darker red for other properties
+						]
+					);
+				}
+				
+				// Update property outline layer if it exists
+				if (map.current.getLayer('property-outline')) {
+					map.current.setPaintProperty(
+						'property-outline',
+						'line-color',
+						[
+							'case',
+							['==', ['get', 'isOwnProperty'], true],
+							'#2E7D32', // Darker green for own properties
+							['==', ['get', 'forSale'], true],
+							'#FF8F00', // Darker yellow for properties for sale
+							'#B71C1C'  // Darker red for other properties
+						]
+					);
+				}
 			} else {
 				console.log('Creating new properties source and layer')
 				// Add source first
@@ -1014,6 +969,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							'fill-opacity': 0.7, // Increased opacity for better visibility
 							'fill-color': [
 								'case',
+								// Use the isOwnProperty flag directly
 								['==', ['get', 'isOwnProperty'], true],
 								'#4CAF50', // Green for own properties
 								['==', ['get', 'forSale'], true],
@@ -1022,6 +978,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							],
 							'fill-outline-color': [
 								'case',
+								// Matching outline colors using the same condition
 								['==', ['get', 'isOwnProperty'], true],
 								'#2E7D32', // Darker green for own properties
 								['==', ['get', 'forSale'], true],
@@ -1039,6 +996,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						paint: {
 							'line-color': [
 								'case',
+								// Matching outline colors using the same condition
 								['==', ['get', 'isOwnProperty'], true],
 								'#2E7D32', // Darker green for own properties
 								['==', ['get', 'forSale'], true],
@@ -1614,6 +1572,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				}
 				
 				moveEndTimeoutRef.current = window.setTimeout(() => {
+					// Store the current user ID for comparison during refresh
+					const currentUserId = user?.uid
+					console.log('Current user ID for property refresh:', currentUserId || 'Not logged in', 'Comparing with "user?.uid":', user?.uid)
+					
 					// Direct API call to get ALL properties
 					fetch(`${API_URL}/properties`)
 						.then(res => res.json())
@@ -1630,6 +1592,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								if (!propertiesByOwner[prop.owner]) {
 									propertiesByOwner[prop.owner] = []
 								}
+								
+								// Ensure we preserve ownership information
+								if (currentUserId && prop.owner === currentUserId) {
+									console.log(`Found own property during refresh: ${prop.id}`)
+								}
+								
 								propertiesByOwner[prop.owner].push(prop)
 							})
 							
