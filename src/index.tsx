@@ -11,6 +11,8 @@ import { RouterError } from './pages/RouterError'
 import { Home } from './pages/Home'
 import { Settings } from './pages/Settings'
 import { NotFound } from './pages/NotFound'
+import { Dashboard } from './pages/Dashboard'
+import { Leaderboard } from './pages/Leaderboard'
 
 const router: Router = createBrowserRouter([
 	{
@@ -21,6 +23,14 @@ const router: Router = createBrowserRouter([
 			{
 				index: true,
 				element: <Home />,
+			},
+			{
+				path: 'dashboard',
+				element: <Dashboard />,
+			},
+			{
+				path: 'leaderboard',
+				element: <Leaderboard />,
 			},
 			{
 				path: 'settings',

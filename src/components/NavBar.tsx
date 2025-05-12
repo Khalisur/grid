@@ -37,6 +37,8 @@ import {
 	FaMountain,
 	FaSatellite,
 	FaTable,
+	FaChartBar,
+	FaTrophy,
 } from 'react-icons/fa'
 // We need to use Chakra UI's <Link> component for consistency with the rest of the UI.
 // But we need to use React Router's <Link> component for the routing to work properly.
@@ -199,7 +201,46 @@ export const NavBar: FunctionComponent = (): ReactElement => {
 						/>
 						{isExpanded && <Text>Home</Text>}
 					</Link>
-
+					
+					<Link
+						as={ReactRouterLink}
+						to="/dashboard"
+						display="flex"
+						alignItems="center"
+						justifyContent={isExpanded ? 'flex-start' : 'center'}
+						p={2}
+						borderRadius="md"
+						_hover={{
+							bg: colorMode === 'light' ? 'gray.100' : 'gray.700',
+						}}
+					>
+						<Icon
+							as={FaChartBar}
+							fontSize="20px"
+							mr={isExpanded ? 3 : 0}
+						/>
+						{isExpanded && <Text>Dashboard</Text>}
+					</Link>
+					
+					<Link
+						as={ReactRouterLink}
+						to="/leaderboard"
+						display="flex"
+						alignItems="center"
+						justifyContent={isExpanded ? 'flex-start' : 'center'}
+						p={2}
+						borderRadius="md"
+						_hover={{
+							bg: colorMode === 'light' ? 'gray.100' : 'gray.700',
+						}}
+					>
+						<Icon
+							as={FaTrophy}
+							fontSize="20px"
+							mr={isExpanded ? 3 : 0}
+						/>
+						{isExpanded && <Text>Leaderboard</Text>}
+					</Link>
 				</VStack>
 
 				{/* Spacer to push content to bottom */}
