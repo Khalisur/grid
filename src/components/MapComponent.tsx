@@ -42,7 +42,14 @@ import {
 	NumberDecrementStepper,
 	Textarea,
 	Badge,
-	Flex
+	Flex,
+	SimpleGrid,
+	Card,
+	CardBody,
+	CardHeader,
+	CardFooter,
+	Divider,
+	Stack
 } from '@chakra-ui/react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
@@ -52,7 +59,7 @@ import { SearchIcon } from '@chakra-ui/icons'
 import { useUserStore } from '../stores/userStore'
 import { useAuthStore } from '../stores/authStore'
 import { v4 as uuidv4 } from 'uuid'
-import { Property } from '../stores/userStore'
+import { Property as UserProperty } from '../stores/userStore'
 import { fetchWithAuth } from '../firebase/authUtils'
 
 // Set Mapbox access token
@@ -92,6 +99,19 @@ type MapboxFeature = GeoJSON.Feature & {
 	center: [number, number]
 }
 
+// Define a new type for property bids
+type PropertyBid = {
+	userId: string
+	amount: number
+	message: string
+	createdAt: Date
+}
+
+// Add bid-related fields to the Property interface
+interface PropertyWithBids extends UserProperty {
+	bids?: PropertyBid[]
+}
+
 export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	initialOptions,
 	children,
@@ -119,13 +139,19 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	
 	// Property modal state
 	const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false)
-	const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
+	const [selectedProperty, setSelectedProperty] = useState<PropertyWithBids | null>(null)
 	const [propertyName, setPropertyName] = useState('')
 	const [propertyDescription, setPropertyDescription] = useState('')
 	const [propertyAddress, setPropertyAddress] = useState('')
 	const [propertyForSale, setPropertyForSale] = useState(false)
 	const [propertySalePrice, setPropertySalePrice] = useState(0)
 	const [isOwnProperty, setIsOwnProperty] = useState(false)
+
+	// Add bid-related state
+	const [propertyBids, setPropertyBids] = useState<PropertyBid[]>([])
+	const [bidAmount, setBidAmount] = useState<number>(0)
+	const [bidMessage, setBidMessage] = useState('')
+	const [isLoadingBids, setIsLoadingBids] = useState(false)
 
 	// Get map settings from store
 	const { currentStyle, gridColor, selectionColor } = useMapStore()
@@ -140,6 +166,57 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 	// Add a loading ref to track API call status
 	const isLoadingUsers = useRef(false)
+
+	// Function to fetch all bids for a property
+	const fetchPropertyBids = useCallback(async (propertyId: string) => {
+		if (!user || !propertyId) return
+		
+		try {
+			setIsLoadingBids(true)
+			console.log(`Fetching bids for property ID: ${propertyId}`)
+			const response = await fetchWithAuth(`${API_URL}/properties/${propertyId}/bids`)
+			
+			if (response.ok) {
+				const responseData = await response.json()
+				console.log('Fetched property bids response:', responseData)
+				
+				// Handle different response structures
+				let bidsArray: PropertyBid[] = []
+				
+				if (Array.isArray(responseData)) {
+					// If the response is directly an array of bids
+					bidsArray = responseData
+					console.log('Response is a direct array with length:', bidsArray.length)
+				} else if (responseData && typeof responseData === 'object') {
+					// If the response is an object that contains a bids property
+					if (Array.isArray(responseData.bids)) {
+						bidsArray = responseData.bids
+						console.log('Response has bids array with length:', bidsArray.length)
+					} else {
+						console.log('Response has no bids array or empty bids:', responseData.bids)
+					}
+				} else {
+					console.log('Response is neither array nor object:', responseData)
+				}
+				
+				console.log('Final parsed bids array:', bidsArray)
+				setPropertyBids(bidsArray)
+			} else {
+				console.error('Failed to fetch property bids:', await response.text())
+				setPropertyBids([])
+			}
+		} catch (error) {
+			console.error('Error fetching property bids:', error)
+			setPropertyBids([])
+		} finally {
+			setIsLoadingBids(false)
+		}
+	}, [user])
+
+	// Also add a useEffect to log when propertyBids changes
+	useEffect(() => {
+		console.log('propertyBids state updated:', propertyBids)
+	}, [propertyBids])
 
 	// Update the useEffect for ensureUserProfile to avoid repeated API calls
 	useEffect(() => {
@@ -636,7 +713,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			console.log('Property color should be:', isOwnProperty ? 'green' : (forSale ? 'yellow' : 'red'))
 			
 			// Find property data in user properties
-			let propertyData: Property | null = null
+			let propertyData: PropertyWithBids | null = null
 			let ownerData = null
 			
 			// Look for the owner in users
@@ -673,6 +750,16 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setPropertySalePrice(propertyData.salePrice || 0)
 			setIsOwnProperty(!!isOwnProperty)
 			
+			// Reset bid form
+			setBidAmount(0)
+			setBidMessage('')
+			
+			// Fetch bids for this property if the user is the owner
+			if (isOwnProperty) {
+				// Fetch bids for this property
+				fetchPropertyBids(propertyId)
+			}
+			
 			// Open modal
 			setIsPropertyModalOpen(true)
 			
@@ -707,7 +794,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		} else {
 			console.log('No property features found at click location')
 		}
-	}, [user, usersRef, toast, updateSelection])
+	}, [user, usersRef, toast, updateSelection, fetchPropertyBids])
 
 	// Add a new property loading retry mechanism
 	const [propertyLoadAttempts, setPropertyLoadAttempts] = useState(0)
@@ -848,7 +935,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							console.log(`Repair: Fetched ${properties.length} properties directly from API`)
 							
 							// Force a new attempt to load properties after fetching fresh data
-							const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))]
+							const uniqueUserIds = [...new Set(properties.map((prop: UserProperty) => prop.owner))]
 							
 							// Make sure we have data for all users
 							let fetchedUsers = 0
@@ -1176,7 +1263,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setIsLoading(true)
 			
 			// Update property details
-			const updatedProperty: Property = {
+			const updatedProperty: PropertyWithBids = {
 				...selectedProperty,
 				name: propertyName,
 				description: propertyDescription,
@@ -1501,9 +1588,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								console.log(`Fetched ${allProperties.length} properties after style load`)
 								
 								// Group properties by owner to update our users object
-								const propertiesByOwner: Record<string, Property[]> = {}
+								const propertiesByOwner: Record<string, UserProperty[]> = {}
 								
-								allProperties.forEach((prop: Property) => {
+								allProperties.forEach((prop: UserProperty) => {
 									if (!propertiesByOwner[prop.owner]) {
 										propertiesByOwner[prop.owner] = []
 									}
@@ -1585,10 +1672,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							if (allProperties.length === 0) return
 							
 							// Store all user properties keyed by user ID for our in-memory users
-							const propertiesByOwner: Record<string, Property[]> = {}
+							const propertiesByOwner: Record<string, UserProperty[]> = {}
 							
 							// Group properties by owner
-							allProperties.forEach((prop: Property) => {
+							allProperties.forEach((prop: UserProperty) => {
 								if (!propertiesByOwner[prop.owner]) {
 									propertiesByOwner[prop.owner] = []
 								}
@@ -1834,7 +1921,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const propertyId = uuidv4()
 			
 			// Create a property object
-			const propertyData: Property = {
+			const propertyData: PropertyWithBids = {
 				id: propertyId,
 				owner: user.uid,
 				cells: selectedCellArray,
@@ -1958,10 +2045,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								
 								if (allProperties.length > 0) {
 									// Create user mapping for all properties
-									const propertiesByOwner: Record<string, Property[]> = {}
+									const propertiesByOwner: Record<string, UserProperty[]> = {}
 									
 									// Group properties by owner
-									allProperties.forEach((prop: Property) => {
+									allProperties.forEach((prop: UserProperty) => {
 										if (!propertiesByOwner[prop.owner]) {
 											propertiesByOwner[prop.owner] = []
 										}
@@ -2098,7 +2185,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							console.log(`Fetched ${properties.length} total properties from all users`);
 							
 							// Extract unique user IDs from properties
-							const uniqueUserIds = [...new Set(properties.map((prop: Property) => prop.owner))];
+							const uniqueUserIds = [...new Set(properties.map((prop: UserProperty) => prop.owner))];
 							console.log(`Found ${uniqueUserIds.length} unique property owners`);
 							
 							// Load data for each property owner
@@ -2141,6 +2228,141 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			fetchUserData();
 		}
 	}, [user, fetchUsers, loadProperties]);
+
+	// Function to place a bid on a property
+	const handlePlaceBid = async () => {
+		if (!user || !selectedProperty) return
+		
+		try {
+			setIsLoading(true)
+			
+			// Validate bid amount
+			if (bidAmount <= 0) {
+				toast({
+					title: 'Invalid Bid',
+					description: 'Bid amount must be greater than zero',
+					status: 'error',
+					duration: 3000,
+					isClosable: true,
+				})
+				return
+			}
+			
+			// Check if user has enough tokens
+			const userProfile = usersRef.current?.[user.uid]
+			if (!userProfile || userProfile.tokens < bidAmount) {
+				toast({
+					title: 'Insufficient Tokens',
+					description: `You need ${bidAmount} tokens to place this bid`,
+					status: 'error',
+					duration: 3000,
+					isClosable: true,
+				})
+				return
+			}
+			
+			// Send bid to API
+			const response = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/bid`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					amount: bidAmount,
+					message: bidMessage
+				})
+			})
+			
+			if (!response.ok) {
+				throw new Error(`Failed to place bid: ${await response.text()}`)
+			}
+			
+			// Bid successful
+			toast({
+				title: 'Bid Placed',
+				description: 'Your bid has been placed successfully',
+				status: 'success',
+				duration: 3000,
+				isClosable: true,
+			})
+			
+			// Reset bid form
+			setBidAmount(0)
+			setBidMessage('')
+			
+			// Refresh bids
+			await fetchPropertyBids(selectedProperty.id)
+			
+			// Update user tokens
+			await updateUserTokensDisplay()
+		} catch (error) {
+			console.error('Error placing bid:', error)
+			toast({
+				title: 'Error',
+				description: error instanceof Error ? error.message : 'Failed to place bid',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+		} finally {
+			setIsLoading(false)
+		}
+	}
+
+	// Function to accept a bid
+	const handleAcceptBid = async (bidUserId: string) => {
+		if (!user || !selectedProperty) return
+		
+		try {
+			setIsLoading(true)
+			
+			// Send accept bid request to API
+			const response = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/bid/accept`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					bidUserId
+				})
+			})
+			
+			if (!response.ok) {
+				throw new Error(`Failed to accept bid: ${await response.text()}`)
+			}
+			
+			// Bid accepted successfully
+			toast({
+				title: 'Bid Accepted',
+				description: 'The property has been sold successfully',
+				status: 'success',
+				duration: 3000,
+				isClosable: true,
+			})
+			
+			// Close modal
+			setIsPropertyModalOpen(false)
+			
+			// Refresh user data and properties
+			await fetchUsers()
+			
+			// Force property reload with a small delay
+			setTimeout(() => {
+				refreshPropertyDisplay()
+			}, 500)
+		} catch (error) {
+			console.error('Error accepting bid:', error)
+			toast({
+				title: 'Error',
+				description: error instanceof Error ? error.message : 'Failed to accept bid',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+		} finally {
+			setIsLoading(false)
+		}
+	}
 
 	return (
 		<>
@@ -2237,7 +2459,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					<ModalOverlay />
 					<ModalContent>
 						<ModalHeader>
-							{isOwnProperty ? 'Your Property Details' : 'Property For Sale'}
+							{isOwnProperty ? 'Your Property Details' : 'Property Details'}
 							{selectedProperty?.forSale && (
 								<Badge colorScheme="green" ml={2}>For Sale</Badge>
 							)}
@@ -2248,6 +2470,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								<TabList>
 									<Tab>Details</Tab>
 									{isOwnProperty && <Tab>Sell Property</Tab>}
+									{isOwnProperty && <Tab>View Bids</Tab>}
+									{!isOwnProperty && selectedProperty?.forSale && <Tab>Place Bid</Tab>}
 								</TabList>
 								<TabPanels>
 									<TabPanel>
@@ -2307,6 +2531,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 														>
 															Buy This Property
 														</Button>
+														<Text mt={2} textAlign="center" fontSize="sm" color="gray.500">
+															Or place a bid on the &quot;Place Bid&quot; tab
+														</Text>
 													</>
 												)}
 											</>
@@ -2340,6 +2567,103 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 													</NumberInput>
 												</FormControl>
 											)}
+										</TabPanel>
+									)}
+									
+									{/* View Bids Tab for Property Owner */}
+									{isOwnProperty && (
+										<TabPanel>
+											<Text fontWeight="bold" mb={4}>Bids for Your Property</Text>
+											<Text fontSize="xs" color="gray.500" mb={2}>Property ID: {selectedProperty?.id}</Text>
+											
+											{isLoadingBids ? (
+												<Center p={4}>
+													<Spinner mr={2} />
+													<Text>Loading bids...</Text>
+												</Center>
+											) : !Array.isArray(propertyBids) || propertyBids.length === 0 ? (
+												<Text color="gray.500" textAlign="center">No bids have been placed on this property yet.</Text>
+											) : (
+												<>
+													<Text fontSize="xs" color="gray.500" mb={2}>Found {propertyBids.length} bids</Text>
+													<Stack spacing={4}>
+														{propertyBids.map((bid, index) => (
+															<Card key={index} variant="outline">
+																<CardHeader pb={0}>
+																	<Flex justifyContent="space-between" alignItems="center">
+																		<Text fontWeight="bold">
+																			Bid from {usersRef.current?.[bid.userId]?.name || bid.userId.substring(0, 6) + '...'}
+																		</Text>
+																		<Badge colorScheme="green">{bid.amount} tokens</Badge>
+																	</Flex>
+																</CardHeader>
+																<CardBody pt={2}>
+																	{bid.message && <Text fontSize="sm">{bid.message}</Text>}
+																	<Text fontSize="xs" color="gray.500" mt={1}>
+																		{new Date(bid.createdAt).toLocaleString()}
+																	</Text>
+																</CardBody>
+																<CardFooter pt={0}>
+																	<Button 
+																		colorScheme="green" 
+																		size="sm" 
+																		width="full"
+																		onClick={() => handleAcceptBid(bid.userId)}
+																		isLoading={isLoading}
+																	>
+																		Accept Bid
+																	</Button>
+																</CardFooter>
+															</Card>
+														))}
+													</Stack>
+												</>
+											)}
+										</TabPanel>
+									)}
+									
+									{/* Place Bid Tab for Other Users */}
+									{!isOwnProperty && selectedProperty?.forSale && (
+										<TabPanel>
+											<Text fontWeight="bold" mb={4}>Place a Bid on This Property</Text>
+											<FormControl mb={4}>
+												<FormLabel>Bid Amount (tokens)</FormLabel>
+												<NumberInput
+													value={bidAmount}
+													onChange={(value) => setBidAmount(Number(value))}
+													min={1}
+												>
+													<NumberInputField />
+													<NumberInputStepper>
+														<NumberIncrementStepper />
+														<NumberDecrementStepper />
+													</NumberInputStepper>
+												</NumberInput>
+											</FormControl>
+											
+											<FormControl mb={4}>
+												<FormLabel>Message (optional)</FormLabel>
+												<Textarea 
+													value={bidMessage} 
+													onChange={(e) => setBidMessage(e.target.value)}
+													placeholder="Add a message to the property owner..."
+													resize="vertical"
+													rows={3}
+												/>
+											</FormControl>
+											
+											<Button 
+												colorScheme="blue" 
+												width="100%" 
+												onClick={handlePlaceBid}
+												isLoading={isLoading}
+											>
+												Submit Bid
+											</Button>
+											
+											<Text mt={3} fontSize="sm" color="gray.500" textAlign="center">
+												You currently have {usersRef.current?.[user?.uid || '']?.tokens || 0} tokens available.
+											</Text>
 										</TabPanel>
 									)}
 								</TabPanels>
