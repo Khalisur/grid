@@ -2509,6 +2509,305 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 	}
 
+	// Function to find a property by ID and zoom to it
+	const findAndZoomToProperty = useCallback(async (propertyId: string) => {
+		if (!mapInstance || !propertyId) return;
+		
+		console.log(`Trying to find property with ID: ${propertyId}`);
+		
+		try {
+			// First try to find the property in the local users data
+			let propertyFound = false;
+			let propCells: string[] = [];
+			
+			// Check all users' properties
+			for (const userData of Object.values(users)) {
+				if (!userData.properties) continue;
+				
+				const property = userData.properties.find(p => p.id === propertyId);
+				if (property) {
+					propCells = property.cells || [];
+					propertyFound = true;
+					
+					// Store the property ID but don't open the modal
+					setCurrentPropertyId(propertyId);
+					
+					console.log(`Found property in local data: ${property.name || property.id}`);
+					console.log(`Property has ${propCells.length} cells`);
+					console.log(`Property cells:`, propCells);
+					break;
+				}
+			}
+			
+			// If not found locally, try to fetch from API
+			if (!propertyFound) {
+				console.log("Property not found in local data, fetching from API...");
+				const response = await fetch(`${API_URL}/properties/${propertyId}`);
+				
+				if (response.ok) {
+					const property = await response.json();
+					propCells = property.cells || [];
+					
+					// Store the property ID but don't open the modal
+					setCurrentPropertyId(propertyId);
+					
+					console.log(`Found property from API: ${property.name || property.id}`);
+					console.log(`Property has ${propCells.length} cells`);
+					console.log(`Property cells:`, propCells);
+				} else {
+					console.error("Failed to fetch property:", response.statusText);
+					toast({
+						title: "Property Not Found",
+						description: "Could not find the requested property.",
+						status: "error",
+						duration: 5000,
+						isClosable: true,
+					});
+					return;
+				}
+			}
+			
+			// If we have cells, calculate their center and zoom to it
+			if (propCells.length > 0) {
+				console.log("Processing property cells for zooming");
+				
+				// Try to find the correct format for cells
+				const firstCell = propCells[0];
+				console.log("First cell format:", firstCell);
+				
+				let totalLng = 0;
+				let totalLat = 0;
+				let validCells = 0;
+				let cellFormat = 'unknown';
+				
+				// Check what format the cells are in
+				if (typeof firstCell === 'string') {
+					if (firstCell.includes('_')) {
+						// Format: "lng_lat"
+						cellFormat = 'underscore';
+						propCells.forEach(cellKey => {
+							const [lngStr, latStr] = cellKey.split('_');
+							const lng = parseFloat(lngStr);
+							const lat = parseFloat(latStr);
+							
+							if (!isNaN(lng) && !isNaN(lat)) {
+								totalLng += lng;
+								totalLat += lat;
+								validCells++;
+							}
+						});
+					} else if (firstCell.includes(',')) {
+						// Format: "lng,lat"
+						cellFormat = 'comma';
+						propCells.forEach(cellKey => {
+							const [lngStr, latStr] = cellKey.split(',');
+							const lng = parseFloat(lngStr);
+							const lat = parseFloat(latStr);
+							
+							if (!isNaN(lng) && !isNaN(lat)) {
+								totalLng += lng;
+								totalLat += lat;
+								validCells++;
+							}
+						});
+					} else {
+						// Try if it's just direct coordinates as string
+						cellFormat = 'direct';
+						try {
+							// Convert cells directly to numbers if they're stored as numeric strings
+							propCells.forEach(cellKey => {
+								const num = parseFloat(cellKey);
+								if (!isNaN(num)) {
+									// Just collect all numbers, we'll split them into lng/lat pairs later
+									totalLng += num;
+									validCells++;
+								}
+							});
+							
+							// If we have an even number of valid cells, treat them as lng/lat pairs
+							if (validCells > 0 && validCells % 2 === 0) {
+								const lngSum = propCells.filter((_, i) => i % 2 === 0).reduce((sum, val) => sum + parseFloat(val), 0);
+								const latSum = propCells.filter((_, i) => i % 2 === 1).reduce((sum, val) => sum + parseFloat(val), 0);
+								totalLng = lngSum;
+								totalLat = latSum;
+								validCells = validCells / 2; // Adjust for pairs
+							}
+						} catch (e) {
+							console.error("Error processing direct cell format:", e);
+						}
+					}
+				}
+				
+				console.log(`Cell format detected: ${cellFormat}, found ${validCells} valid cells`);
+				
+				if (validCells > 0) {
+					const centerLng = totalLng / validCells;
+					const centerLat = totalLat / validCells;
+					
+					console.log(`Calculated center point: [${centerLng}, ${centerLat}] from ${validCells} valid cells`);
+					
+					// Check if coordinates are outside valid range for mapbox
+					if (Math.abs(centerLng) > 180 || Math.abs(centerLat) > 90) {
+						console.log("Coordinates outside valid range, attempting to normalize...");
+						
+						// This is the value in the sample data: "-740031,577666"
+						// These are actually cell grid indices, not lat/lng coordinates
+						// We need to convert to real coordinates using GRID_SIZE constants
+						// But only if we see values that are too large to be real coords
+						
+						// Reset accumulation variables
+						totalLng = 0;
+						totalLat = 0;
+						validCells = 0;
+						
+						// Reprocess cells as grid indices instead of direct coordinates
+						propCells.forEach(cellKey => {
+							const parts = cellKey.split(',');
+							if (parts.length === 2) {
+								const lngIndex = parseInt(parts[0], 10);
+								const latIndex = parseInt(parts[1], 10);
+								
+								if (!isNaN(lngIndex) && !isNaN(latIndex)) {
+									// Convert grid indices to real coordinates
+									const realLng = lngIndex * GRID_SIZE;
+									const realLat = latIndex * GRID_SIZE_LAT;
+									
+									totalLng += realLng;
+									totalLat += realLat;
+									validCells++;
+								}
+							}
+						});
+						
+						if (validCells > 0) {
+							const gridCenterLng = totalLng / validCells;
+							const gridCenterLat = totalLat / validCells;
+							
+							console.log(`Converted to grid coordinates: [${gridCenterLng}, ${gridCenterLat}]`);
+							
+							// Validate the resulting coordinates
+							if (Math.abs(gridCenterLng) <= 180 && Math.abs(gridCenterLat) <= 90) {
+								mapInstance.flyTo({
+									center: [gridCenterLng, gridCenterLat],
+									zoom: 18,
+									essential: true,
+									animate: true,
+									duration: 2000
+								});
+								
+								console.log(`Executed flyTo with grid coordinates: [${gridCenterLng}, ${gridCenterLat}]`);
+							} else {
+								throw new Error("Converted coordinates still outside valid range");
+							}
+						} else {
+							throw new Error("Failed to interpret cell coordinates");
+						}
+					} else {
+						// Original coordinates are in valid range
+						// Zoom to property with explicit animation settings
+						mapInstance.flyTo({
+							center: [centerLng, centerLat],
+							zoom: 18,
+							essential: true,
+							animate: true,
+							duration: 2000
+						});
+						
+						console.log(`Executed flyTo command to [${centerLng}, ${centerLat}]`);
+					}
+				} else {
+					console.error("No valid coordinates found in property cells");
+					
+					// Last resort: if cells might be indexes rather than coordinates
+					// For indexes, we need to convert them to actual coordinates
+					console.log("Trying to interpret cells as grid indexes...");
+					
+					let indexLngSum = 0;
+					let indexLatSum = 0;
+					let validIndexCells = 0;
+					
+					propCells.forEach(cellKey => {
+						// Try to extract two numbers from the cell key
+						const match = cellKey.match(/(\d+)[^0-9]+(\d+)/);
+						if (match && match.length >= 3) {
+							const lngIndex = parseInt(match[1], 10);
+							const latIndex = parseInt(match[2], 10);
+							
+							if (!isNaN(lngIndex) && !isNaN(latIndex)) {
+								// Convert indexes to coordinates using the grid size constants
+								indexLngSum += lngIndex * GRID_SIZE;
+								indexLatSum += latIndex * GRID_SIZE_LAT;
+								validIndexCells++;
+							}
+						}
+					});
+					
+					if (validIndexCells > 0) {
+						const centerLng = indexLngSum / validIndexCells;
+						const centerLat = indexLatSum / validIndexCells;
+						
+						console.log(`Index-based center point: [${centerLng}, ${centerLat}] from ${validIndexCells} valid cells`);
+						
+						// Zoom to property with index-based coordinates
+						mapInstance.flyTo({
+							center: [centerLng, centerLat],
+							zoom: 18,
+							essential: true,
+							animate: true,
+							duration: 2000
+						});
+						
+						console.log(`Executed index-based flyTo command to [${centerLng}, ${centerLat}]`);
+					} else {
+						console.error("Failed to interpret cells in any format");
+						toast({
+							title: "Error",
+							description: "Could not determine property location from cell data.",
+							status: "error",
+							duration: 5000,
+							isClosable: true,
+						});
+					}
+				}
+			} else {
+				console.error("Property has no cells");
+				toast({
+					title: "Error",
+					description: "Property has no location data to display on map.",
+					status: "error",
+					duration: 5000,
+					isClosable: true,
+				});
+			}
+		} catch (error) {
+			console.error("Error finding and zooming to property:", error);
+			toast({
+				title: "Error",
+				description: "Failed to locate the property on the map.",
+				status: "error",
+				duration: 5000,
+				isClosable: true,
+			});
+		}
+	}, [mapInstance, users, toast]);
+
+	// Check URL parameters for propertyId and zoom to property
+	useEffect(() => {
+		if (!mapInstance || !styleLoaded || !Object.keys(users).length) return;
+		
+		// Get propertyId from URL parameters
+		const urlParams = new URLSearchParams(window.location.search);
+		const propertyId = urlParams.get('propertyId');
+		
+		if (propertyId) {
+			console.log(`Found propertyId in URL: ${propertyId}, will attempt to zoom to it`);
+			// Wait a bit for the map to be ready
+			setTimeout(() => {
+				findAndZoomToProperty(propertyId);
+			}, 1000);
+		}
+	}, [mapInstance, styleLoaded, users, findAndZoomToProperty]);
+
 	return (
 		<>
 			<Global
