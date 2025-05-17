@@ -105,6 +105,8 @@ type PropertyBid = {
 	amount: number
 	message: string
 	createdAt: Date
+	status?: 'active' | 'accepted' | 'declined' | 'cancelled'
+	_id?: string
 }
 
 // Add bid-related fields to the Property interface
@@ -169,11 +171,14 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 	// Function to fetch all bids for a property
 	const fetchPropertyBids = useCallback(async (propertyId: string) => {
-		if (!user || !propertyId) return
+		if (!user || !propertyId) {
+			console.log('Cannot fetch bids: No user or property ID')
+			return
+		}
 		
 		try {
 			setIsLoadingBids(true)
-			console.log(`Fetching bids for property ID: ${propertyId}`)
+			console.log(`Fetching bids for property ID: ${propertyId}, current user: ${user.uid}`)
 			const response = await fetchWithAuth(`${API_URL}/properties/${propertyId}/bids`)
 			
 			if (response.ok) {
@@ -197,6 +202,13 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					}
 				} else {
 					console.log('Response is neither array nor object:', responseData)
+				}
+				
+				// Check if there are any bids from the current user
+				const userBids = bidsArray.filter(bid => bid.userId === user.uid)
+				console.log(`Found ${userBids.length} bids from current user (${user.uid})`)
+				if (userBids.length > 0) {
+					console.log('User bids:', userBids)
 				}
 				
 				console.log('Final parsed bids array:', bidsArray)
@@ -754,11 +766,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setBidAmount(0)
 			setBidMessage('')
 			
-			// Fetch bids for this property if the user is the owner
-			if (isOwnProperty) {
-				// Fetch bids for this property
-				fetchPropertyBids(propertyId)
-			}
+			// Fetch bids for this property - whether owner or not
+			// This ensures "My Bids" tab works for everyone
+			fetchPropertyBids(propertyId)
 			
 			// Open modal
 			setIsPropertyModalOpen(true)
@@ -1369,7 +1379,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			}
 			
 			// Make API call to purchase the property
-			const purchaseResponse = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/buy`)
+			const purchaseResponse = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/buy`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+			})
 			
 			if (!purchaseResponse.ok) {
 				const errorData = await purchaseResponse.json().catch(() => ({}))
@@ -2250,6 +2265,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Check if user has enough tokens
 			const userProfile = usersRef.current?.[user.uid]
+			console.log('User profile:', userProfile)
 			if (!userProfile || userProfile.tokens < bidAmount) {
 				toast({
 					title: 'Insufficient Tokens',
@@ -2260,6 +2276,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				})
 				return
 			}
+			
+			console.log(`Placing bid on property ${selectedProperty.id}, amount: ${bidAmount}`)
 			
 			// Send bid to API
 			const response = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/bid`, {
@@ -2277,6 +2295,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				throw new Error(`Failed to place bid: ${await response.text()}`)
 			}
 			
+			// Get the response data to confirm bid was placed
+			const responseData = await response.json().catch(() => null)
+			console.log('Bid placement response:', responseData)
+			
 			// Bid successful
 			toast({
 				title: 'Bid Placed',
@@ -2290,11 +2312,41 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setBidAmount(0)
 			setBidMessage('')
 			
-			// Refresh bids
+			// Refresh bids to see the new bid
+			console.log('Refreshing bids after placing a new bid')
 			await fetchPropertyBids(selectedProperty.id)
 			
 			// Update user tokens
 			await updateUserTokensDisplay()
+			
+			// Switch to the My Bids tab
+			// Check if we can find the tab index for My Bids
+			setTimeout(() => {
+				try {
+					const tabElements = document.querySelectorAll('.chakra-tabs__tab')
+					let myBidsTabIndex = -1
+					
+					// Find the My Bids tab
+					for (let i = 0; i < tabElements.length; i++) {
+						if (tabElements[i].textContent?.includes('My Bids')) {
+							myBidsTabIndex = i
+							break
+						}
+					}
+					
+					// If found, try to select it
+					if (myBidsTabIndex >= 0) {
+						console.log('Switching to My Bids tab')
+						const tabsElement = document.querySelector('.chakra-tabs')
+						if (tabsElement && 'index' in tabsElement) {
+							tabsElement.index = myBidsTabIndex
+						}
+					}
+				} catch (error) {
+					console.error('Error switching to My Bids tab:', error)
+				}
+			}, 500)
+			
 		} catch (error) {
 			console.error('Error placing bid:', error)
 			toast({
@@ -2355,6 +2407,99 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			toast({
 				title: 'Error',
 				description: error instanceof Error ? error.message : 'Failed to accept bid',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+		} finally {
+			setIsLoading(false)
+		}
+	}
+
+	// Add functions to decline and cancel bids
+	const handleDeclineBid = async (bidUserId: string) => {
+		if (!user || !selectedProperty) return
+		
+		try {
+			setIsLoading(true)
+			
+			// Send decline bid request to API
+			const response = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/bid/decline`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					bidUserId
+				})
+			})
+			
+			if (!response.ok) {
+				throw new Error(`Failed to decline bid: ${await response.text()}`)
+			}
+			
+			// Decline successful
+			toast({
+				title: 'Bid Declined',
+				description: 'The bid has been declined',
+				status: 'info',
+				duration: 3000,
+				isClosable: true,
+			})
+			
+			// Refresh bids
+			await fetchPropertyBids(selectedProperty.id)
+		} catch (error) {
+			console.error('Error declining bid:', error)
+			toast({
+				title: 'Error',
+				description: error instanceof Error ? error.message : 'Failed to decline bid',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			})
+		} finally {
+			setIsLoading(false)
+		}
+	}
+
+	const handleCancelBid = async (bidId: string) => {
+		if (!user || !selectedProperty) return
+		
+		try {
+			setIsLoading(true)
+			
+			// Send cancel bid request to API
+			const response = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/bid/cancel`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					bidId
+				})
+			})
+			
+			if (!response.ok) {
+				throw new Error(`Failed to cancel bid: ${await response.text()}`)
+			}
+			
+			// Cancel successful
+			toast({
+				title: 'Bid Cancelled',
+				description: 'Your bid has been cancelled',
+				status: 'info',
+				duration: 3000,
+				isClosable: true,
+			})
+			
+			// Refresh bids
+			await fetchPropertyBids(selectedProperty.id)
+		} catch (error) {
+			console.error('Error cancelling bid:', error)
+			toast({
+				title: 'Error',
+				description: error instanceof Error ? error.message : 'Failed to cancel bid',
 				status: 'error',
 				duration: 3000,
 				isClosable: true,
@@ -2472,6 +2617,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 									{isOwnProperty && <Tab>Sell Property</Tab>}
 									{isOwnProperty && <Tab>View Bids</Tab>}
 									{!isOwnProperty && selectedProperty?.forSale && <Tab>Place Bid</Tab>}
+									{!isOwnProperty && <Tab>My Bids</Tab>}
 								</TabList>
 								<TabPanels>
 									<TabPanel>
@@ -2594,7 +2740,14 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 																		<Text fontWeight="bold">
 																			Bid from {usersRef.current?.[bid.userId]?.name || bid.userId.substring(0, 6) + '...'}
 																		</Text>
-																		<Badge colorScheme="green">{bid.amount} tokens</Badge>
+																		<Badge colorScheme={
+																			bid.status === 'accepted' ? 'green' : 
+																			bid.status === 'declined' ? 'red' : 
+																			bid.status === 'cancelled' ? 'gray' : 
+																			'blue'
+																		}>
+																			{bid.amount} tokens {bid.status && bid.status !== 'active' ? `(${bid.status})` : ''}
+																		</Badge>
 																	</Flex>
 																</CardHeader>
 																<CardBody pt={2}>
@@ -2603,17 +2756,30 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 																		{new Date(bid.createdAt).toLocaleString()}
 																	</Text>
 																</CardBody>
-																<CardFooter pt={0}>
-																	<Button 
-																		colorScheme="green" 
-																		size="sm" 
-																		width="full"
-																		onClick={() => handleAcceptBid(bid.userId)}
-																		isLoading={isLoading}
-																	>
-																		Accept Bid
-																	</Button>
-																</CardFooter>
+																{(!bid.status || bid.status === 'active') && (
+																	<CardFooter pt={0}>
+																		<Flex width="full" gap={2}>
+																			<Button 
+																				colorScheme="green" 
+																				size="sm" 
+																				flex="1"
+																				onClick={() => handleAcceptBid(bid.userId)}
+																				isLoading={isLoading}
+																			>
+																				Accept
+																			</Button>
+																			<Button 
+																				colorScheme="red" 
+																				size="sm" 
+																				flex="1"
+																				onClick={() => handleDeclineBid(bid.userId || '')}
+																				isLoading={isLoading}
+																			>
+																				Decline
+																			</Button>
+																		</Flex>
+																	</CardFooter>
+																)}
 															</Card>
 														))}
 													</Stack>
@@ -2664,6 +2830,83 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 											<Text mt={3} fontSize="sm" color="gray.500" textAlign="center">
 												You currently have {usersRef.current?.[user?.uid || '']?.tokens || 0} tokens available.
 											</Text>
+										</TabPanel>
+									)}
+									
+									{/* My Bids Tab for non-owner users */}
+									{!isOwnProperty && (
+										<TabPanel>
+											<Text fontWeight="bold" mb={4}>My Bids on This Property</Text>
+											<Text fontSize="xs" color="gray.500" mb={2}>
+												Property ID: {selectedProperty?.id} | Your User ID: {user?.uid}
+											</Text>
+											
+											{isLoadingBids ? (
+												<Center p={4}>
+													<Spinner mr={2} />
+													<Text>Loading your bids...</Text>
+												</Center>
+											) : (
+												<>
+													<Text fontSize="xs" color="gray.500" mb={2}>
+														Total bids loaded: {propertyBids.length} | 
+														Your bids: {propertyBids.filter(bid => bid.userId === user?.uid).length}
+													</Text>
+													
+													{propertyBids
+														.filter(bid => bid.userId === user?.uid)
+														.map((bid, index) => (
+															<Card key={index} variant="outline" mb={4}>
+																<CardHeader pb={0}>
+																	<Flex justifyContent="space-between" alignItems="center">
+																		<Text fontWeight="bold">Your Bid</Text>
+																		<Badge colorScheme={
+																			bid.status === 'accepted' ? 'green' : 
+																			bid.status === 'declined' ? 'red' : 
+																			bid.status === 'cancelled' ? 'gray' : 
+																			'blue'
+																		}>
+																			{bid.amount} tokens {bid.status && bid.status !== 'active' ? `(${bid.status})` : ''}
+																		</Badge>
+																	</Flex>
+																</CardHeader>
+																<CardBody pt={2}>
+																	{bid.message && <Text fontSize="sm">{bid.message}</Text>}
+																	<Text fontSize="xs" color="gray.500" mt={1}>
+																		{new Date(bid.createdAt).toLocaleString()}
+																	</Text>
+																	<Text fontSize="xs" color="gray.500" mt={1}>
+																		Bid ID: {bid._id || 'Unknown'}
+																	</Text>
+																</CardBody>
+																{(!bid.status || bid.status === 'active') && (
+																	<CardFooter pt={0}>
+																		<Button 
+																			colorScheme="red" 
+																			size="sm" 
+																			width="full"
+																			onClick={() => handleCancelBid(bid._id || '')}
+																			isLoading={isLoading}
+																		>
+																			Cancel Bid
+																		</Button>
+																	</CardFooter>
+																)}
+															</Card>
+														))}
+														
+													{propertyBids.filter(bid => bid.userId === user?.uid).length === 0 && (
+														<>
+															<Text color="gray.500" textAlign="center" mb={2}>
+																You haven&apos;t placed any bids on this property yet.
+															</Text>
+															<Text fontSize="xs" color="gray.500" textAlign="center">
+																(If you just placed a bid, try refreshing the page.)
+															</Text>
+														</>
+													)}
+												</>
+											)}
 										</TabPanel>
 									)}
 								</TabPanels>
