@@ -22,7 +22,7 @@ export const Layout: FunctionComponent<LayoutProps> = ({
 						height: 100%;
 						margin: 0;
 						padding: 0;
-						overflow: hidden;
+						overflow: auto;
 					}
 				`}
 			/>
@@ -32,10 +32,10 @@ export const Layout: FunctionComponent<LayoutProps> = ({
 				height="100vh"
 				width="100vw"
 				position="relative"
-				overflow="hidden"
+				overflow="auto"
 			>
 				{/* An <Outlet> renders whatever child route is currently active */}
-				<Box width="100%" height="100%" overflow="hidden">
+				<Box width="100%" height="100%" overflow="auto">
 					{children || <Outlet />}
 				</Box>
 

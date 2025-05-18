@@ -82,6 +82,15 @@ interface PropertyStore {
   // Update bid status
   updateBidStatus: (bidId: string, status: Bid['status']) => Promise<boolean>
   
+  // Accept a bid on user's property
+  acceptBid: (propertyId: string, bidId: string) => Promise<boolean>
+  
+  // Decline a bid on user's property
+  declineBid: (propertyId: string, bidId: string) => Promise<boolean>
+  
+  // Cancel a bid made by user
+  cancelBid: (propertyId: string) => Promise<boolean>
+  
   // Reset error state
   resetErrors: () => void
   
@@ -332,10 +341,12 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
     }
     
     try {
-      const response = await fetchWithAuthRetry(`${API_URL}/properties/bids`, {
+      const response = await fetchWithAuthRetry(`${API_URL}/properties/${propertyId}/bid`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          propertyId,
           amount,
           message
         }),
@@ -391,6 +402,141 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         error: { 
           ...state.error, 
           bidsReceived: error instanceof Error ? error.message : 'Unknown error' 
+        }
+      }));
+      return false;
+    }
+  },
+  
+  acceptBid: async (propertyId, bidId) => {
+    if (!isUserAuthenticated()) {
+      set(state => ({ 
+        error: { ...state.error, bidsReceived: 'Authentication required to accept bid' }
+      }));
+      return false;
+    }
+    
+    try {
+      const bidsReceived = get().bidsReceived;
+      const bid = bidsReceived.find(bid => bid.propertyId === propertyId && bid.id === bidId);
+      
+      if (!bid) {
+        throw new Error('Bid not found');
+      }
+      
+      const response = await fetchWithAuthRetry(`${API_URL}/properties/${propertyId}/bid/accept`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bidUserId: bid.bidder
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+      
+      // Refresh both bid lists after accepting
+      await Promise.all([
+        get().fetchBidsReceived(),
+        get().fetchBidsMade()
+      ]);
+      
+      return true;
+    } catch (error) {
+      console.error('Error accepting bid:', error);
+      set(state => ({
+        error: { 
+          ...state.error, 
+          bidsReceived: error instanceof Error ? error.message : 'Unknown error' 
+        }
+      }));
+      return false;
+    }
+  },
+  
+  declineBid: async (propertyId, bidId) => {
+    if (!isUserAuthenticated()) {
+      set(state => ({ 
+        error: { ...state.error, bidsReceived: 'Authentication required to decline bid' }
+      }));
+      return false;
+    }
+    
+    try {
+      const bidsReceived = get().bidsReceived;
+      const bid = bidsReceived.find(bid => bid.propertyId === propertyId && bid.id === bidId);
+      console.log('bid----------->', bid)
+      
+      if (!bid) {
+        throw new Error('Bid not found');
+      }
+      
+      const response = await fetchWithAuthRetry(`${API_URL}/properties/${propertyId}/bid/decline`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bidUserId: bid.bidder
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+      
+      // Refresh both bid lists after declining
+      await Promise.all([
+        get().fetchBidsReceived(),
+        get().fetchBidsMade()
+      ]);
+      
+      return true;
+    } catch (error) {
+      console.error('Error declining bid:', error);
+      set(state => ({
+        error: { 
+          ...state.error, 
+          bidsReceived: error instanceof Error ? error.message : 'Unknown error' 
+        }
+      }));
+      return false;
+    }
+  },
+  
+  cancelBid: async (propertyId) => {
+    if (!isUserAuthenticated()) {
+      set(state => ({ 
+        error: { ...state.error, bidsMade: 'Authentication required to cancel bid' }
+      }));
+      return false;
+    }
+    
+    try {
+      const response = await fetchWithAuthRetry(`${API_URL}/properties/${propertyId}/bid/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+      
+      // Refresh bids made after cancellation
+      await get().fetchBidsMade();
+      
+      return true;
+    } catch (error) {
+      console.error('Error canceling bid:', error);
+      set(state => ({
+        error: { 
+          ...state.error, 
+          bidsMade: error instanceof Error ? error.message : 'Unknown error' 
         }
       }));
       return false;

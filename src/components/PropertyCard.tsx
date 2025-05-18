@@ -1,5 +1,5 @@
 /* eslint-disable prettier/prettier */
-import { Box, Badge, Image, Text, Flex, Heading, Button, useColorModeValue } from '@chakra-ui/react'
+import { Box, Badge, Image, Text, Flex, Heading, Button, useColorModeValue, theme } from '@chakra-ui/react'
 import { FaMapMarkerAlt } from 'react-icons/fa'
 import { Property } from '../stores/userStore'
 import { Link } from 'react-router-dom'
@@ -43,6 +43,7 @@ export const PropertyCard = ({ property, showActions = true }: PropertyCardProps
             px={2}
             py={1}
             borderRadius="md"
+            bg={theme.colors.green[500]}
           >
             For Sale
           </Badge>

@@ -43,7 +43,9 @@ export const Dashboard = () => {
 		fetchUserProperties, 
 		fetchBidsMade, 
 		fetchBidsReceived,
-		updateBidStatus,
+		acceptBid,
+		declineBid,
+		cancelBid,
 		resetErrors,
 		initAuth
 	} = usePropertyStore()
@@ -132,23 +134,86 @@ export const Dashboard = () => {
 	const pendingOffers = bidsReceivedArray.filter(bid => bid.status === 'active').length
 	
 	// Handle bid actions
-	const handleAcceptBid = (bidId: string) => {
-		updateBidStatus(bidId, 'accepted')
+	const handleAcceptBid = async (bidId: string) => {
+		const bid = bidsReceivedArray.find(b => b.id === bidId);
+		if (!bid) {
+			toast({
+				title: 'Error',
+				description: 'Bid not found',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			});
+			return;
+		}
+
+		const success = await acceptBid(bid.propertyId, bidId);
+		if (success) {
+			toast({
+				title: 'Bid Accepted',
+				description: 'The bid has been accepted successfully',
+				status: 'success',
+				duration: 3000,
+				isClosable: true,
+			});
+		}
 	}
 	
-	const handleDeclineBid = (bidId: string) => {
-		updateBidStatus(bidId, 'declined')
+	const handleDeclineBid = async (bidId: string) => {
+		const bid = bidsReceivedArray.find(b => b.id === bidId);
+		if (!bid) {
+			toast({
+				title: 'Error',
+				description: 'Bid not found',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			});
+			return;
+		}
+
+		const success = await declineBid(bid.propertyId, bidId);
+		if (success) {
+			toast({
+				title: 'Bid Declined',
+				description: 'The bid has been declined successfully',
+				status: 'success',
+				duration: 3000,
+				isClosable: true,
+			});
+		}
 	}
 	
-	const handleCancelBid = (bidId: string) => {
-		updateBidStatus(bidId, 'cancelled')
+	const handleCancelBid = async (bidId: string) => {
+		const bid = bidsMadeArray.find(b => b.id === bidId);
+		if (!bid) {
+			toast({
+				title: 'Error',
+				description: 'Bid not found',
+				status: 'error',
+				duration: 3000,
+				isClosable: true,
+			});
+			return;
+		}
+
+		const success = await cancelBid(bid.propertyId);
+		if (success) {
+			toast({
+				title: 'Bid Cancelled',
+				description: 'Your bid has been cancelled successfully',
+				status: 'success',
+				duration: 3000,
+				isClosable: true,
+			});
+		}
 	}
 	
 	// Check if all data is loading for the first time
 	const isInitialLoading = loading.properties && loading.bidsMade && loading.bidsReceived
 	
 	return (
-		<Box p={8} maxWidth="1200px" mx="auto">
+		<Box p={8} maxWidth="1200px" mx="auto" height="auto" minHeight="100%">
 			<Heading mb={6}>Dashboard</Heading>
 			
 			{isInitialLoading ? (
@@ -223,7 +288,11 @@ export const Dashboard = () => {
 										You don&apos;t own any properties yet.
 									</Alert>
 								) : (
-									<SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
+									<SimpleGrid 
+										columns={{ base: 1, md: 2, lg: 3 }} 
+										spacing={6}
+										pb={4}
+									>
 										{userPropertiesArray.map(property => (
 											<PropertyCard 
 												key={property.id} 

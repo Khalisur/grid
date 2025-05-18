@@ -26,8 +26,7 @@ interface BidCardProps {
 export const BidCard = ({ 
   bid, 
   isUserReceived = false,
-  onAccept, 
-  onDecline, 
+ 
   onCancel 
 }: BidCardProps) => {
   const cardBg = useColorModeValue('white', 'gray.700')
@@ -104,25 +103,7 @@ export const BidCard = ({
             View Property
           </Button>
           
-          {isUserReceived && onAccept && onDecline && (
-            <>
-              <Button 
-                size="xs" 
-                colorScheme="green" 
-                onClick={() => onAccept(bid.id)}
-              >
-                Accept
-              </Button>
-              <Button 
-                size="xs" 
-                colorScheme="red" 
-                variant="outline"
-                onClick={() => onDecline(bid.id)}
-              >
-                Decline
-              </Button>
-            </>
-          )}
+          
           
           {!isUserReceived && onCancel && (
             <Button 

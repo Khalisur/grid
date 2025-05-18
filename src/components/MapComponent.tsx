@@ -282,6 +282,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							duration: 5000,
 							isClosable: true,
 						})
+						
+						// Update token display
+						setTimeout(() => {
+							updateUserTokensDisplay();
+						}, 300);
 					} else {
 						throw new Error('Failed to create user profile')
 					}
@@ -1230,6 +1235,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					setTimeout(() => loadProperties(), 300)
 					setTimeout(() => loadProperties(), 1000)
 					setTimeout(() => loadProperties(), 2000)
+					
+					// Also refresh token display
+					if (user) {
+						setTimeout(() => updateUserTokensDisplay(), 500)
+						setTimeout(() => updateUserTokensDisplay(), 2500)
+					}
 				})
 			}
 		}
@@ -1410,6 +1421,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setTimeout(() => {
 				refreshPropertyDisplay()
 			}, 500)
+			
+			// Update token display
+			setTimeout(() => {
+				updateUserTokensDisplay();
+			}, 300);
 		} catch (error) {
 			console.error('Error purchasing property:', error)
 			toast({
@@ -1587,6 +1603,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			newMap.on('styledata', () => {
 				console.log('Style data event received')
 				checkStyleLoaded()
+				
+				// Refresh user tokens when style is loaded
+				if (user) {
+					updateUserTokensDisplay();
+				}
 				
 				// Also reload properties when style loads
 				if (newMap.isStyleLoaded()) {
@@ -1979,7 +2000,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setTimeout(() => {
 				refreshPropertyDisplay()
 			}, 500)
-
+			
+			// Update token display
+			setTimeout(() => {
+				updateUserTokensDisplay();
+			}, 300);
+			
 			// Fly to newly purchased property after a short delay
 			setTimeout(() => {
 				console.log('Flying to newly purchased property')
@@ -2118,7 +2144,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		};
 	}, []); // Empty dependency array ensures this only runs once on mount
 
-	// Add a function to update the user tokens display
+	// Add this state above other state declarations (around line 115)
+	const [userTokens, setUserTokens] = useState<number | null>(null)
+
+	// Replace the updateUserTokensDisplay function with this improved version
 	const updateUserTokensDisplay = useCallback(async () => {
 		if (!user) return;
 		
@@ -2129,10 +2158,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			if (response.ok) {
 				const userData = await response.json();
 				
+				// Update both local state AND usersRef
+				setUserTokens(userData.tokens);
+				
 				// Update local state
 				if (usersRef.current) {
 					usersRef.current[user.uid] = userData;
-					// Force a re-render (you can use a state variable if needed)
 					console.log('Updated user tokens display:', userData.tokens);
 				}
 			}
@@ -2141,108 +2172,77 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 	}, [user]);
 
-	// Call the update function periodically
+	// Replace the useEffect for token updating with this more robust version
 	useEffect(() => {
 		if (!user) return;
 		
-		// Update once on mount
+		// Update once on mount or when user changes
 		updateUserTokensDisplay();
 		
-		// Then set up interval to refresh every 30 seconds
+		// Then set up interval to refresh every 10 seconds (more frequent refreshes)
 		const intervalId = setInterval(() => {
 			updateUserTokensDisplay();
-		}, 30000);
+		}, 10000);
 		
 		return () => {
 			clearInterval(intervalId);
 		};
 	}, [user, updateUserTokensDisplay]);
 
-	// Also update user tokens after property operations
+	// Add this effect to update token display based on local data
 	useEffect(() => {
-		// Listen for modal close events to refresh user data
-		const refreshAfterModal = () => {
-			if (!isPropertyModalOpen && user) {
-				// Modal was just closed, refresh user data
-				setTimeout(() => {
-					updateUserTokensDisplay();
-				}, 500);
+		if (user && usersRef.current && usersRef.current[user.uid]?.tokens !== undefined) {
+			setUserTokens(usersRef.current[user.uid].tokens);
+		}
+	}, [user, usersRef.current]);
+
+	// Replace the token display box with this improved version
+	{/* Show user tokens */}
+	{user && (
+		<Box
+			position="absolute"
+			top="56px"
+			right="16px"
+			zIndex={1001}
+			bg="white"
+			p={2}
+			borderRadius="md"
+			boxShadow="md"
+		>
+			<Text fontWeight="bold" color="gray.800">
+				Tokens: {userTokens !== null ? userTokens : (usersRef.current?.[user.uid]?.tokens || 0)}
+			</Text>
+		</Box>
+	)}
+
+	// Add this effect to handle token updates when changes happen
+	useEffect(() => {
+		// Add refreshUserTokens function to trigger updates when changes happen
+		const refreshUserTokens = () => {
+			if (user) {
+				updateUserTokensDisplay();
 			}
 		};
 		
-		refreshAfterModal();
-	}, [isPropertyModalOpen, user, updateUserTokensDisplay]);
-
-	// Add a direct user data refresh when user logs in
-	useEffect(() => {
-		if (user) {
-			console.log('User logged in, immediately refreshing user data');
-			
-			// Try to fetch user data immediately when user is available
-			const fetchUserData = async () => {
-				try {
-					// First, get the current user's data
-					const response = await fetchWithAuth(`${API_URL}/users/profile`);
-					
-					if (response.ok) {
-						const userData = await response.json();
-						console.log('Direct user data fetch successful:', userData);
-						
-						// Update local state
-						if (usersRef.current) {
-							usersRef.current[user.uid] = userData;
-						}
-						
-						// Now specifically fetch ALL properties to ensure we get other users' data too
-						const propsResponse = await fetch(`${API_URL}/properties`);
-						if (propsResponse.ok) {
-							const properties = await propsResponse.json();
-							console.log(`Fetched ${properties.length} total properties from all users`);
-							
-							// Extract unique user IDs from properties
-							const uniqueUserIds = [...new Set(properties.map((prop: UserProperty) => prop.owner))];
-							console.log(`Found ${uniqueUserIds.length} unique property owners`);
-							
-							// Load data for each property owner
-							for (const uid of uniqueUserIds) {
-								if (uid !== user.uid && typeof uid === 'string') { // Skip current user, already loaded
-									try {
-										const userResponse = await fetchWithAuth(`${API_URL}/users/profile`);
-										if (userResponse.ok) {
-											const otherUserData = await userResponse.json();
-											console.log(`Loaded data for user: ${otherUserData.name}`);
-											// Add to users ref
-											if (usersRef.current) {
-												usersRef.current[uid] = otherUserData;
-											}
-										}
-									} catch (error) {
-										console.error(`Error fetching user ${uid}:`, error);
-									}
-								}
-							}
-							
-							// Finally do a full refresh and force property reload
-							setTimeout(() => {
-								console.log('Loading all properties after user login');
-								loadProperties();
-								
-								// Try multiple times with increasing delays to ensure properties load
-								setTimeout(() => loadProperties(), 500);
-								setTimeout(() => loadProperties(), 1500);
-							}, 200);
-						}
-					} else if (response.status === 404) {
-						console.log('User not found in API, will be created by ensureUserProfile');
-					}
-				} catch (error) {
-					console.error('Error in direct user data fetch:', error);
-				}
-			};
-			
-			fetchUserData();
+		// Refresh tokens whenever:
+		// 1. Map is clicked (possible property interaction)
+		// 2. Modal is closed (possible property transaction)
+		
+		if (map.current) {
+			map.current.on('click', refreshUserTokens);
 		}
-	}, [user, fetchUsers, loadProperties]);
+		
+		// Listen for property modal close events
+		if (!isPropertyModalOpen && user) {
+			refreshUserTokens();
+		}
+		
+		return () => {
+			if (map.current) {
+				map.current.off('click', refreshUserTokens);
+			}
+		};
+	}, [map, isPropertyModalOpen, user, updateUserTokensDisplay]);
 
 	// Function to place a bid on a property
 	const handlePlaceBid = async () => {
@@ -2317,7 +2317,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			await fetchPropertyBids(selectedProperty.id)
 			
 			// Update user tokens
-			await updateUserTokensDisplay()
+			await updateUserTokensDisplay();
 			
 			// Switch to the My Bids tab
 			// Check if we can find the tab index for My Bids
@@ -2402,6 +2402,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setTimeout(() => {
 				refreshPropertyDisplay()
 			}, 500)
+			
+			// Update token display
+			setTimeout(() => {
+				updateUserTokensDisplay();
+			}, 300);
 		} catch (error) {
 			console.error('Error accepting bid:', error)
 			toast({
@@ -2449,6 +2454,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Refresh bids
 			await fetchPropertyBids(selectedProperty.id)
+			
+			// Add:
+			// Update token display
+			await updateUserTokensDisplay();
 		} catch (error) {
 			console.error('Error declining bid:', error)
 			toast({
@@ -2857,7 +2866,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				</Box>
 
 				{/* Show user tokens */}
-				{user && usersRef.current[user.uid] && (
+				{user && (
 					<Box
 						position="absolute"
 						top="56px"
@@ -2868,7 +2877,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						borderRadius="md"
 						boxShadow="md"
 					>
-						<Text fontWeight="bold" color="gray.800">Tokens: {usersRef.current[user.uid].tokens}</Text>
+						<Text fontWeight="bold" color="gray.800">
+							Tokens: {userTokens !== null ? userTokens : (usersRef.current?.[user.uid]?.tokens || 0)}
+						</Text>
 					</Box>
 				)}
 
