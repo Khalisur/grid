@@ -1926,7 +1926,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				const locationInfo = await getLocationFromCells(selectedCellArray)
 				if (locationInfo && locationInfo.address) {
 					detectedAddress = locationInfo.address
-					console.log('Detected location for selected cells:', locationInfo)
+					console.log('Detected location for selected cells:', detectedAddress)
 				}
 			} catch (error) {
 				console.error('Error detecting location:', error)
