@@ -241,6 +241,26 @@ export const NavBar: FunctionComponent = (): ReactElement => {
 						/>
 						{isExpanded && <Text>Leaderboard</Text>}
 					</Link>
+
+					<Link
+						as={ReactRouterLink}
+						to="/admin"
+						display="flex"
+						alignItems="center"
+						justifyContent={isExpanded ? 'flex-start' : 'center'}
+						p={2}
+						borderRadius="md"
+						_hover={{
+							bg: colorMode === 'light' ? 'gray.100' : 'gray.700',
+						}}
+					>
+						<Icon
+							as={FaCog}
+							fontSize="20px"
+							mr={isExpanded ? 3 : 0}
+						/>
+						{isExpanded && <Text>Admin Portal</Text>}
+					</Link>
 				</VStack>
 
 				{/* Spacer to push content to bottom */}

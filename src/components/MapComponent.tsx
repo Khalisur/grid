@@ -1895,46 +1895,88 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	const handleBuyProperty = async (): Promise<void> => {
 		if (!user) {
 			toast({
-				title: 'Error',
-				description: 'You must be logged in to buy property',
-				status: 'error',
-				duration: 3000,
+				title: "Authentication Required",
+				description: "Please connect your wallet to buy property.",
+				status: "error",
+				duration: 5000,
 				isClosable: true,
-			})
-			return
+			});
+			return;
 		}
 
-		const selectedCellArray = Array.from(selectedCells.current)
+		const selectedCellArray = Array.from(selectedCells.current);
 		if (selectedCellArray.length === 0) {
 			toast({
-				title: 'Error',
-				description: 'Please select at least one cell to buy',
-				status: 'error',
-				duration: 3000,
+				title: "No Cells Selected",
+				description: "Please select at least one cell to buy.",
+				status: "error",
+				duration: 5000,
 				isClosable: true,
-			})
-			return
+			});
+			return;
 		}
-		
-		// Show loading state immediately
-		setIsLoading(true)
-		
+
 		try {
-			// Get location info for the selected cells to help with naming
-			let detectedAddress = ''
-			try {
-				const locationInfo = await getLocationFromCells(selectedCellArray)
-				if (locationInfo && locationInfo.address) {
-					detectedAddress = locationInfo.address
-					console.log('Detected location for selected cells:', detectedAddress)
-				}
-			} catch (error) {
-				console.error('Error detecting location:', error)
-				// Non-critical error, continue with purchase
-			}
+			setIsLoading(true);
 			
+			// First get the location address
+			const locationInfo = await getLocationFromCells(selectedCellArray);
+			if (!locationInfo || !locationInfo.address) {
+				toast({
+					title: "Location Error",
+					description: "Could not determine the location for the selected cells.",
+					status: "error",
+					duration: 5000,
+					isClosable: true,
+				});
+				setIsLoading(false);
+				return;
+			}
+
+			// Store the detected address for later use
+			setDetectedAddress(locationInfo.address);
+
+			// Now fetch the base price using the location address
+			setIsLoadingBasePrice(true);
+			const priceResponse = await fetchWithAuth(`${API_URL}/price/calculate`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ address: locationInfo.address }), // Use the address from the location info object
+			});
+
+			if (!priceResponse.ok) {
+				throw new Error('Failed to calculate price');
+			}
+
+			const priceData = await priceResponse.json();
+			setBasePrice(priceData.basePrice);
+			setIsLoadingBasePrice(false);
+			setIsPriceModalOpen(true);
+			setIsLoading(false);
+		} catch (error) {
+			console.error('Error calculating price:', error);
+			toast({
+				title: "Error",
+				description: "Failed to calculate property price. Please try again.",
+				status: "error",
+				duration: 5000,
+				isClosable: true,
+			});
+			setIsLoading(false);
+			setIsLoadingBasePrice(false);
+		}
+	}
+
+	// Add new function to handle the actual purchase after price confirmation
+	const handleConfirmPurchase = async (): Promise<void> => {
+		if (!user) return
+		
+		setIsLoading(true)
+		try {
 			// Use the bulk cell checking method instead of individual checks
-			const ownedCells = await checkMultipleCellsOwnership(selectedCellArray)
+			const ownedCells = await checkMultipleCellsOwnership(Array.from(selectedCells.current))
 			
 			if (ownedCells.length > 0) {
 				toast({
@@ -1970,8 +2012,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			console.log('Working with user profile:', usersRef.current[user.uid])
 			
-			// Calculate total cost
-			const totalCost = selectedCellArray.length * propertyPrice
+			// Calculate total cost using base price
+			const totalCost = selectedCells.current.size * basePrice
 			if (usersRef.current[user.uid].tokens < totalCost) {
 				toast({
 					title: 'Error',
@@ -1996,7 +2038,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const propertyData: PropertyWithBids = {
 				id: propertyId,
 				owner: user.uid,
-				cells: selectedCellArray,
+				cells: Array.from(selectedCells.current),
 				price: totalCost,
 				name: defaultName,
 				address: detectedAddress || ''
@@ -2054,6 +2096,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				console.log('Flying to newly purchased property')
 				flyToProperty(propertyId)
 			}, 1000)
+
+			// Close the price modal
+			setIsPriceModalOpen(false)
 		} catch (error) {
 			console.error('Buy property error:', error)
 			toast({
@@ -2187,11 +2232,15 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		};
 	}, []); // Empty dependency array ensures this only runs once on mount
 
-	// Add this state above other state declarations (around line 115)
+	// Keep only one set of state declarations (around line 115)
 	const [userTokens, setUserTokens] = useState<number | null>(null)
+	const [isPriceModalOpen, setIsPriceModalOpen] = useState(false)
+	const [basePrice, setBasePrice] = useState<number>(0)
+	const [isLoadingBasePrice, setIsLoadingBasePrice] = useState(false)
+	const [detectedAddress, setDetectedAddress] = useState<string>('')
 
-	// Replace the updateUserTokensDisplay function with this improved version
-	const updateUserTokensDisplay = useCallback(async () => {
+	// Add the updateUserTokensDisplay function
+	const updateUserTokensDisplay = async () => {
 		if (!user) return;
 		
 		try {
@@ -2213,7 +2262,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		} catch (error) {
 			console.error('Error updating user tokens display:', error);
 		}
-	}, [user]);
+	}
 
 	// Replace the useEffect for token updating with this more robust version
 	useEffect(() => {
@@ -2860,6 +2909,46 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		}
 	}, [mapInstance, styleLoaded, users, findAndZoomToProperty]);
 
+	// Add this new modal component before the return statement
+	const PriceConfirmationModal = () => (
+		<Modal isOpen={isPriceModalOpen} onClose={() => setIsPriceModalOpen(false)}>
+			<ModalOverlay />
+			<ModalContent>
+				<ModalHeader>Confirm Purchase</ModalHeader>
+				<ModalCloseButton />
+				<ModalBody>
+					{isLoadingBasePrice ? (
+						<Center p={4}>
+							<Spinner mr={2} />
+							<Text>Calculating price...</Text>
+						</Center>
+					) : (
+						<>
+							<Text mb={4}>Base Price per Cell: {basePrice} tokens</Text>
+							<Text mb={4}>Number of Cells: {selectedCells.current.size}</Text>
+							<Text fontWeight="bold" fontSize="xl" color="green.500">
+								Total Cost: {basePrice * selectedCells.current.size} tokens
+							</Text>
+						</>
+					)}
+				</ModalBody>
+				<ModalFooter>
+					<Button variant="ghost" mr={3} onClick={() => setIsPriceModalOpen(false)}>
+						Cancel
+					</Button>
+					<Button 
+						colorScheme="green" 
+						onClick={handleConfirmPurchase}
+						isLoading={isLoading}
+						isDisabled={isLoadingBasePrice}
+					>
+						Buy Now
+					</Button>
+				</ModalFooter>
+			</ModalContent>
+		</Modal>
+	)
+
 	return (
 		<>
 			<Global
@@ -3373,6 +3462,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 				{/* Render children only after map and style are loaded */}
 				{!loading && !error && mapInstance && styleLoaded && children}
+
+				{/* Add the PriceConfirmationModal */}
+				<PriceConfirmationModal />
 			</Box>
 		</>
 	)

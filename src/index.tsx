@@ -13,6 +13,7 @@ import { Settings } from './pages/Settings'
 import { NotFound } from './pages/NotFound'
 import { Dashboard } from './pages/Dashboard'
 import { Leaderboard } from './pages/Leaderboard'
+import { AdminPortal } from './pages/AdminPortal'
 
 const router: Router = createBrowserRouter([
 	{
@@ -35,6 +36,10 @@ const router: Router = createBrowserRouter([
 			{
 				path: 'settings',
 				element: <Settings />,
+			},
+			{
+				path: 'admin',
+				element: <AdminPortal />,
 			},
 			{
 				path: '*',
