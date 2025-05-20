@@ -35,6 +35,8 @@ import {
 } from '@chakra-ui/react'
 import { useState, useEffect } from 'react'
 import { fetchWithAuth } from '../firebase/authUtils'
+import { auth } from '../firebase/config'
+import { onAuthStateChanged } from 'firebase/auth'
 
 // API URL from environment variables
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
@@ -51,6 +53,49 @@ interface City {
   value: number
 }
 
+// Helper function to wait for auth initialization
+const waitForAuthInit = async (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    // First check if already authenticated
+    if (auth.currentUser) {
+      resolve(true);
+      return;
+    }
+    
+    // If not, listen once for auth state change
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      unsubscribe();
+      resolve(!!user);
+    });
+    
+    // If auth doesn't initialize within 2 seconds, continue anyway
+    setTimeout(() => {
+      unsubscribe();
+      resolve(false);
+    }, 2000);
+  });
+};
+
+// Helper function to handle authentication errors with retry
+const fetchWithAuthRetry = async (url: string, options: RequestInit = {}, retryCount = 2): Promise<Response> => {
+  try {
+    // Wait for auth to be ready if user just logged in
+    if (retryCount === 2 && !auth.currentUser) {
+      await new Promise(resolve => setTimeout(resolve, 800));
+    }
+    
+    return await fetchWithAuth(url, options);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'User not authenticated' && retryCount > 0) {
+      // Wait a bit and retry
+      console.log(`Auth not ready, retrying (${retryCount} attempts left)...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return fetchWithAuthRetry(url, options, retryCount - 1);
+    }
+    throw error;
+  }
+};
+
 export const AdminPortal = () => {
   const toast = useToast()
   const { isOpen, onOpen, onClose } = useDisclosure()
@@ -65,14 +110,31 @@ export const AdminPortal = () => {
   const [newName, setNewName] = useState('')
   const [newValue, setNewValue] = useState(0)
 
+  // Initialize auth state
+  useEffect(() => {
+    const initAuth = async () => {
+      const isAuthenticated = await waitForAuthInit();
+      if (isAuthenticated) {
+        fetchData();
+      } else {
+        toast({
+          title: 'Authentication Required',
+          description: 'Please log in to access the admin portal',
+          status: 'error',
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+    };
+    initAuth();
+  }, []);
+
   // Fetch countries
   const fetchCountries = async () => {
     try {
-      const response = await fetchWithAuth(`${API_URL}/countries`)
-      console.log('Fetched countries response:', response)
+      const response = await fetchWithAuthRetry(`${API_URL}/countries`)
       if (response.ok) {
         const data = await response.json()
-        console.log('Fetched countries:', data)
         setCountries(data)
       } else {
         throw new Error('Failed to fetch countries')
@@ -91,10 +153,9 @@ export const AdminPortal = () => {
   // Fetch cities
   const fetchCities = async () => {
     try {
-      const response = await fetchWithAuth(`${API_URL}/cities`)
+      const response = await fetchWithAuthRetry(`${API_URL}/cities`)
       if (response.ok) {
         const data = await response.json()
-        console.log('Fetched cities:', data)
         setCities(data)
       } else {
         throw new Error('Failed to fetch cities')
@@ -111,14 +172,11 @@ export const AdminPortal = () => {
   }
 
   // Initial data fetch
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true)
-      await Promise.all([fetchCountries(), fetchCities()])
-      setLoading(false)
-    }
-    fetchData()
-  }, [])
+  const fetchData = async () => {
+    setLoading(true)
+    await Promise.all([fetchCountries(), fetchCities()])
+    setLoading(false)
+  }
 
   // Handle edit button click
   const handleEdit = (item: Country | City) => {
