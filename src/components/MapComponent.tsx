@@ -61,6 +61,7 @@ import { useAuthStore } from '../stores/authStore'
 import { v4 as uuidv4 } from 'uuid'
 import { Property as UserProperty } from '../stores/userStore'
 import { fetchWithAuth } from '../firebase/authUtils'
+import useLocationFromCells from '../hooks/useLocationFromCells'
 
 // Set Mapbox access token
 mapboxgl.accessToken =
@@ -138,6 +139,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	const toast = useToast()
 	const [isLoading, setIsLoading] = useState(false)
 	const [propertiesLoaded, setPropertiesLoaded] = useState(false)
+	
+	// Add location hook
+	const { getLocationFromCells, locationInfo, loading: locationLoading } = useLocationFromCells()
 	
 	// Property modal state
 	const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false)
@@ -473,7 +477,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		})
 
 		// Log selected cell IDs
-		console.log('Selected Grid Cells:', Array.from(selectedCells.current))
 
 		// Update or create selection layer
 		if (map.current.getLayer(GRID_SELECTION_LAYER_ID)) {
@@ -714,7 +717,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			layers: [PROPERTIES_LAYER_ID]
 		})
 		
-		console.log('Property features found:', propertyFeatures.length)
 		
 		if (propertyFeatures.length > 0) {
 			const propertyFeature = propertyFeatures[0]
@@ -723,11 +725,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const isOwnProperty = user && propertyOwner === user.uid
 			const forSale = propertyFeature.properties?.forSale
 			
-			console.log('Clicked on property:', propertyFeature.properties)
-			console.log('Property feature isOwnProperty flag:', propertyFeature.properties?.isOwnProperty)
-			console.log('Calculated isOwnProperty:', isOwnProperty, 'user.uid:', user?.uid, 'propertyOwner:', propertyOwner)
-			console.log('Do they match?', propertyFeature.properties?.isOwnProperty === isOwnProperty)
-			console.log('Property color should be:', isOwnProperty ? 'green' : (forSale ? 'yellow' : 'red'))
+			
 			
 			// Find property data in user properties
 			let propertyData: PropertyWithBids | null = null
@@ -805,11 +803,30 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				
 				// Update selection display
 				updateSelection()
+
+				// Get location info for the property cells
+				getLocationFromCells(property.cells).then(location => {
+					if (location) {
+						console.log('Property location info:', location)
+						// If we have an address but no stored address in the property, suggest updating it
+						if (location.address && !propertyData?.address) {
+							toast({
+								title: 'Location Detected',
+								description: `This property appears to be at "${location.address}". Consider updating the property address.`,
+								status: 'info',
+								duration: 5000,
+								isClosable: true,
+							})
+							// Pre-fill the address field with the detected location
+							setPropertyAddress(location.address)
+						}
+					}
+				})
 			}
 		} else {
 			console.log('No property features found at click location')
 		}
-	}, [user, usersRef, toast, updateSelection, fetchPropertyBids])
+	}, [user, usersRef, toast, updateSelection, fetchPropertyBids, getLocationFromCells])
 
 	// Add a new property loading retry mechanism
 	const [propertyLoadAttempts, setPropertyLoadAttempts] = useState(0)
@@ -839,20 +856,16 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			Object.entries(usersRef.current).forEach(([uid, userData]) => {
 				const propCount = userData.properties?.length || 0
 				totalPropertyCount += propCount
-				console.log(`User ${userData.name} (${uid}) has ${propCount} properties`)
 			})
 			
-			console.log(`Total properties across all users: ${totalPropertyCount}`)
 			
 			// Store the current user ID for comparison
 			const currentUserId = user?.uid
-			console.log('Current user ID for property ownership comparison:', currentUserId || 'Not logged in')
 			
 			// Process all users and their properties
 			Object.values(usersRef.current).forEach(userData => {
 				if (!userData.properties || userData.properties.length === 0) return
 				
-				console.log(`Loading ${userData.properties.length} properties for user ${userData.name} (${userData.uid})`)
 				
 				userData.properties.forEach(property => {
 					// Skip empty properties
@@ -863,10 +876,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					
 					// Determine if this is the current user's property
 					const isOwn = !!(currentUserId && property.owner === currentUserId)
-					if (isOwn) {
-						console.log(`Processing own property ${property.id} with ${property.cells.length} cells`)
-						console.log(`Property owner: "${property.owner}", Current user: "${currentUserId}"`);
-					}
+					
 					
 					// Instead of creating a MultiPolygon, create individual Polygon features for each cell
 					property.cells.forEach(cellKey => {
@@ -917,12 +927,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 									type: 'Polygon',
 									coordinates: cellPolygon
 								}
-							}
-							
-							// Debug output for ownership checking
-							if (isOwn) {
-								console.log(`DEBUG: Cell for property ${property.id} with key ${cellKey} SHOULD be green`)
-								console.log(`DEBUG: Owner=${property.owner}, currentUserId=${currentUserId}, match=${property.owner === currentUserId}`)
 							}
 							
 							allFeatures.push(cellFeature)
@@ -1282,6 +1286,20 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		
 		try {
 			setIsLoading(true)
+			
+			// If address is empty, try to auto-detect it
+			if (!propertyAddress && selectedProperty.cells && selectedProperty.cells.length > 0) {
+				try {
+					const location = await getLocationFromCells(selectedProperty.cells)
+					if (location && location.address) {
+						// Auto-fill the address with detected location
+						setPropertyAddress(location.address)
+						console.log('Auto-detected address:', location.address)
+					}
+				} catch (error) {
+					console.error('Error auto-detecting address:', error)
+				}
+			}
 			
 			// Update property details
 			const updatedProperty: PropertyWithBids = {
@@ -1902,6 +1920,19 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		setIsLoading(true)
 		
 		try {
+			// Get location info for the selected cells to help with naming
+			let detectedAddress = ''
+			try {
+				const locationInfo = await getLocationFromCells(selectedCellArray)
+				if (locationInfo && locationInfo.address) {
+					detectedAddress = locationInfo.address
+					console.log('Detected location for selected cells:', locationInfo)
+				}
+			} catch (error) {
+				console.error('Error detecting location:', error)
+				// Non-critical error, continue with purchase
+			}
+			
 			// Use the bulk cell checking method instead of individual checks
 			const ownedCells = await checkMultipleCellsOwnership(selectedCellArray)
 			
@@ -1956,12 +1987,19 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			// Create a new property with a unique ID
 			const propertyId = uuidv4()
 			
-			// Create a property object
+			// Use detected location for property name/address if available
+			const defaultName = detectedAddress ? 
+				`Property at ${detectedAddress.split(',')[0]}` : 
+				`Property #${propertyId.substring(0, 8)}`
+			
+			// Create a property object with detected address if available
 			const propertyData: PropertyWithBids = {
 				id: propertyId,
 				owner: user.uid,
 				cells: selectedCellArray,
-				price: totalCost, // Initial purchase price (could be made resellable later)
+				price: totalCost,
+				name: defaultName,
+				address: detectedAddress || ''
 			}
 			
 			// Make the API call to purchase the property
@@ -1980,9 +2018,14 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			console.log('purchaseResponse', purchaseResponse)
 			
+			// Add detected location to success message if available
+			const successMsg = detectedAddress ? 
+				`Property at "${detectedAddress}" purchased successfully for ${totalCost} tokens` :
+				`Property purchased successfully for ${totalCost} tokens`
+			
 			toast({
 				title: 'Success',
-				description: `Property purchased successfully for ${totalCost} tokens`,
+				description: successMsg,
 				status: 'success',
 				duration: 3000,
 				isClosable: true,

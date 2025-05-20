@@ -34,29 +34,39 @@ export const Leaderboard = () => {
 
 	useEffect(() => {
 		const loadUsers = async () => {
-			setLoading(true)
-			await fetchUsers()
-			setLoading(false)
+			try {
+				setLoading(true)
+				await fetchUsers()
+			} catch (error) {
+				console.error('Error loading users:', error)
+			} finally {
+				setLoading(false)
+			}
 		}
 		loadUsers()
 	}, [fetchUsers])
 
 	useEffect(() => {
 		if (Object.keys(users).length > 0) {
-			// Transform user data for the leaderboard
-			const userData = Object.values(users).map(user => {
-				// Calculate total cells for each user
-				const totalCells = user.properties.reduce((sum, property) => sum + property.cells.length, 0)
-				
-				return {
-					id: user.uid,
-					name: user.name,
-					totalProperties: user.properties.length,
-					totalCells,
-					rank: 0, // Will be calculated after sorting
-					badge: getBadgeType(totalCells)
-				}
-			})
+			// Transform user data for the leaderboard and ensure unique entries
+			const userData = Object.values(users)
+				.filter((user, index, self) => 
+					// Filter out duplicates based on uid
+					index === self.findIndex((u) => u.uid === user.uid)
+				)
+				.map(user => {
+					// Calculate total cells for each user
+					const totalCells = user.properties.reduce((sum, property) => sum + property.cells.length, 0)
+					
+					return {
+						id: user.uid,
+						name: user.name,
+						totalProperties: user.properties.length,
+						totalCells,
+						rank: 0, // Will be calculated after sorting
+						badge: getBadgeType(totalCells)
+					}
+				})
 			
 			// Sort by total cells in descending order
 			userData.sort((a, b) => b.totalCells - a.totalCells)
