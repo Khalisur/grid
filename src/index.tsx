@@ -14,6 +14,7 @@ import { NotFound } from './pages/NotFound'
 import { Dashboard } from './pages/Dashboard'
 import { Leaderboard } from './pages/Leaderboard'
 import { AdminPortal } from './pages/AdminPortal'
+import { ProtectedRoute } from './components/ProtectedRoute'
 
 const router: Router = createBrowserRouter([
 	{
@@ -39,7 +40,11 @@ const router: Router = createBrowserRouter([
 			},
 			{
 				path: 'admin',
-				element: <AdminPortal />,
+				element: (
+					<ProtectedRoute requireAdmin={true}>
+						<AdminPortal />
+					</ProtectedRoute>
+				),
 			},
 			{
 				path: '*',

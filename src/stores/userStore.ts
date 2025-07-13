@@ -21,6 +21,7 @@ interface UserData {
 	email: string
 	name: string
 	tokens: number
+	isAdmin?: boolean
 	properties: Property[] // Updated from GridProperty[]
 }
 
@@ -58,19 +59,15 @@ export const useUserStore = create<UserStore>()((set, get) => ({
 				// If no users loaded yet, try to get properties
 				const propsResponse = await fetch(`${API_URL}/properties`);
 				const properties = await propsResponse.json();
-				console.log('properties----->', properties, propsResponse.ok)
 
 				if (propsResponse.ok) {
-					console.log('propsResponse----->', properties)
 
 					// We'll fetch all users in a single API call instead of looping
 					try {
-						console.log('Fetching all users at once')
 						const usersResponse = await fetch(`${API_URL}/users/all`);
 						
 						if (usersResponse.ok) {
 							const allUsers = await usersResponse.json();
-							console.log('All users data:', allUsers);
 							
 							// Structure the data properly - allUsers should be an object with user IDs as keys
 							set({ users: allUsers });

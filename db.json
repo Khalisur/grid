@@ -6,6 +6,7 @@
       "email": "bappy@sfdkjff.co",
       "name": "User",
       "tokens": 10,
+      "isAdmin": true,
       "properties": [
         {
           "id": "d5b4922a-e336-4ab8-a480-cc0ff6addb1f",
@@ -35,6 +36,7 @@
       "email": "bappytest@test.co",
       "name": "khalisr",
       "tokens": 10,
+      "isAdmin": true,
       "properties": [
         {
           "id": "318b4e74-7f4b-4370-b4ce-76cd924be969",

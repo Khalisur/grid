@@ -48,6 +48,7 @@ import {
 import { ColorModeSwitcher } from './ColorModeSwitcher'
 import { useMapStore, MapStyle } from '../stores/mapStore'
 import { useAuthStore } from '../stores/authStore'
+import { useUserStore } from '../stores/userStore'
 import { AuthModal } from './AuthModal'
 import { auth } from '../firebase/config'
 import { signOut } from 'firebase/auth'
@@ -64,8 +65,14 @@ export const NavBar: FunctionComponent = (): ReactElement => {
 	const navRef = useRef<HTMLDivElement>(null)
 	const { isOpen, onOpen, onClose } = useDisclosure()
 	const { user, loading } = useAuthStore()
+	const { users } = useUserStore()
 	const bgColor = useColorModeValue('white', 'gray.800')
 	const borderColor = useColorModeValue('gray.200', 'gray.700')
+
+	// Get current user data including admin status
+	const currentUser = user ? users[user.uid] : null
+	console.log('users', users,user)
+	console.log('currentUser', currentUser)
 
 	// Get current settings and setters from store
 	const {
@@ -242,25 +249,27 @@ export const NavBar: FunctionComponent = (): ReactElement => {
 						{isExpanded && <Text>Leaderboard</Text>}
 					</Link>
 
-					<Link
-						as={ReactRouterLink}
-						to="/admin"
-						display="flex"
-						alignItems="center"
-						justifyContent={isExpanded ? 'flex-start' : 'center'}
-						p={2}
-						borderRadius="md"
-						_hover={{
-							bg: colorMode === 'light' ? 'gray.100' : 'gray.700',
-						}}
-					>
-						<Icon
-							as={FaCog}
-							fontSize="20px"
-							mr={isExpanded ? 3 : 0}
-						/>
-						{isExpanded && <Text>Admin Portal</Text>}
-					</Link>
+					{currentUser?.isAdmin && (
+						<Link
+							as={ReactRouterLink}
+							to="/admin"
+							display="flex"
+							alignItems="center"
+							justifyContent={isExpanded ? 'flex-start' : 'center'}
+							p={2}
+							borderRadius="md"
+							_hover={{
+								bg: colorMode === 'light' ? 'gray.100' : 'gray.700',
+							}}
+						>
+							<Icon
+								as={FaCog}
+								fontSize="20px"
+								mr={isExpanded ? 3 : 0}
+							/>
+							{isExpanded && <Text>Admin Portal</Text>}
+						</Link>
+					)}
 				</VStack>
 
 				{/* Spacer to push content to bottom */}

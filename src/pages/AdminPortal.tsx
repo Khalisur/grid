@@ -32,6 +32,12 @@ import {
   HStack,
   Spinner,
   Center,
+  Badge,
+  Switch,
+  Textarea,
+  VStack,
+  Text,
+  Tooltip,
 } from '@chakra-ui/react'
 import { useState, useEffect } from 'react'
 import { fetchWithAuth } from '../firebase/authUtils'
@@ -45,12 +51,22 @@ interface Country {
   _id: string
   name: string
   value: number
+  isAvailable: boolean
+  isActive: boolean
+  disabledReason: string
+  disabledBy: string
+  disabledAt: Date | null
 }
 
 interface City {
   _id: string
   name: string
   value: number
+  isAvailable: boolean
+  isActive: boolean
+  disabledReason: string
+  disabledBy: string
+  disabledAt: Date | null
 }
 
 // Helper function to wait for auth initialization
@@ -109,6 +125,12 @@ export const AdminPortal = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newValue, setNewValue] = useState(0)
+  
+  // New state for availability control
+  const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false)
+  const [availabilityItem, setAvailabilityItem] = useState<Country | City | null>(null)
+  const [disableReason, setDisableReason] = useState('')
+  const [isToggling, setIsToggling] = useState(false)
 
   // Initialize auth state
   useEffect(() => {
@@ -317,6 +339,101 @@ export const AdminPortal = () => {
     }
   }
 
+  // New function to handle availability toggle
+  const handleAvailabilityToggle = async (item: Country | City, reason?: string) => {
+    setIsToggling(true)
+    try {
+      const endpoint = activeTab === 0 ? 'countries' : 'cities'
+      const action = item.isAvailable ? 'disable' : 'enable'
+      
+      const requestOptions: RequestInit = {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+      
+      // Add reason to body if disabling
+      if (action === 'disable' && reason) {
+        requestOptions.body = JSON.stringify({ reason })
+      }
+      
+      const response = await fetchWithAuth(`${API_URL}/${endpoint}/${item._id}/${action}`, requestOptions)
+
+      if (response.ok) {
+        const data = await response.json()
+        toast({
+          title: 'Success',
+          description: data.message,
+          status: 'success',
+          duration: 3000,
+          isClosable: true,
+        })
+        
+        // Refresh data
+        if (activeTab === 0) {
+          fetchCountries()
+        } else {
+          fetchCities()
+        }
+        
+        // Close modal and reset state
+        setIsAvailabilityModalOpen(false)
+        setAvailabilityItem(null)
+        setDisableReason('')
+      } else {
+        const errorData = await response.json()
+        throw new Error(errorData.message || 'Failed to update availability')
+      }
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to update availability',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      })
+    } finally {
+      setIsToggling(false)
+    }
+  }
+
+  // Handle availability button click
+  const handleAvailabilityClick = (item: Country | City) => {
+    setAvailabilityItem(item)
+    if (item.isAvailable) {
+      // If currently available, show modal to get disable reason
+      setIsAvailabilityModalOpen(true)
+    } else {
+      // If currently disabled, enable immediately
+      handleAvailabilityToggle(item)
+    }
+  }
+
+  // Handle disable with reason
+  const handleDisableWithReason = () => {
+    if (availabilityItem) {
+      handleAvailabilityToggle(availabilityItem, disableReason)
+    }
+  }
+
+  // Format date for display
+  const formatDate = (date: Date | null | string) => {
+    if (!date) return 'N/A'
+    return new Date(date).toLocaleDateString()
+  }
+
+  // Get status badge
+  const getStatusBadge = (item: Country | City) => {
+    if (item.isAvailable && item.isActive) {
+      return <Badge colorScheme="green">Available</Badge>
+    } else if (!item.isAvailable) {
+      return <Badge colorScheme="red">Disabled</Badge>
+    } else {
+      return <Badge colorScheme="yellow">Inactive</Badge>
+    }
+  }
+
   if (loading) {
     return (
       <Center h="100vh">
@@ -326,7 +443,7 @@ export const AdminPortal = () => {
   }
 
   return (
-    <Box p={4} w={'70%'} mx={'auto'}>
+    <Box p={4} w={'90%'} mx={'auto'}>
       <Tabs onChange={(index) => setActiveTab(index)}>
         <TabList>
           <Tab>Countries</Tab>
@@ -348,6 +465,10 @@ export const AdminPortal = () => {
                 <Tr>
                   <Th>Name</Th>
                   <Th>Value</Th>
+                  <Th>Status</Th>
+                  <Th>Availability</Th>
+                  <Th>Disabled Reason</Th>
+                  <Th>Disabled Date</Th>
                   <Th>Actions</Th>
                 </Tr>
               </Thead>
@@ -356,6 +477,27 @@ export const AdminPortal = () => {
                   <Tr key={country._id}>
                     <Td>{country.name}</Td>
                     <Td>{country.value}</Td>
+                    <Td>{getStatusBadge(country)}</Td>
+                    <Td>
+                      <Switch
+                        isChecked={country.isAvailable}
+                        onChange={() => handleAvailabilityClick(country)}
+                        colorScheme="green"
+                        isDisabled={isToggling}
+                      />
+                    </Td>
+                    <Td>
+                      {country.disabledReason ? (
+                        <Tooltip label={country.disabledReason}>
+                          <Text isTruncated maxW="200px">
+                            {country.disabledReason}
+                          </Text>
+                        </Tooltip>
+                      ) : (
+                        'N/A'
+                      )}
+                    </Td>
+                    <Td>{formatDate(country.disabledAt)}</Td>
                     <Td>
                       <HStack spacing={2}>
                         <Button
@@ -394,6 +536,10 @@ export const AdminPortal = () => {
                 <Tr>
                   <Th>Name</Th>
                   <Th>Value</Th>
+                  <Th>Status</Th>
+                  <Th>Availability</Th>
+                  <Th>Disabled Reason</Th>
+                  <Th>Disabled Date</Th>
                   <Th>Actions</Th>
                 </Tr>
               </Thead>
@@ -402,6 +548,27 @@ export const AdminPortal = () => {
                   <Tr key={city._id}>
                     <Td>{city.name}</Td>
                     <Td>{city.value}</Td>
+                    <Td>{getStatusBadge(city)}</Td>
+                    <Td>
+                      <Switch
+                        isChecked={city.isAvailable}
+                        onChange={() => handleAvailabilityClick(city)}
+                        colorScheme="green"
+                        isDisabled={isToggling}
+                      />
+                    </Td>
+                    <Td>
+                      {city.disabledReason ? (
+                        <Tooltip label={city.disabledReason}>
+                          <Text isTruncated maxW="200px">
+                            {city.disabledReason}
+                          </Text>
+                        </Tooltip>
+                      ) : (
+                        'N/A'
+                      )}
+                    </Td>
+                    <Td>{formatDate(city.disabledAt)}</Td>
                     <Td>
                       <HStack spacing={2}>
                         <Button
@@ -509,6 +676,48 @@ export const AdminPortal = () => {
               </Button>
               <Button onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
             </HStack>
+          </ModalBody>
+        </ModalContent>
+      </Modal>
+
+      {/* Availability Control Modal */}
+      <Modal isOpen={isAvailabilityModalOpen} onClose={() => setIsAvailabilityModalOpen(false)}>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>
+            Disable {activeTab === 0 ? 'Country' : 'City'} for Purchase
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody pb={6}>
+            <VStack spacing={4} align="stretch">
+              <Text>
+                You are about to disable <strong>{availabilityItem?.name}</strong> for property purchases.
+              </Text>
+              
+              <FormControl>
+                <FormLabel>Reason for Disabling (Required)</FormLabel>
+                <Textarea
+                  value={disableReason}
+                  onChange={(e) => setDisableReason(e.target.value)}
+                  placeholder="Enter reason for disabling this location..."
+                  rows={4}
+                />
+              </FormControl>
+
+              <HStack mt={6} spacing={3}>
+                <Button
+                  colorScheme="red"
+                  onClick={handleDisableWithReason}
+                  isLoading={isToggling}
+                  isDisabled={!disableReason.trim()}
+                >
+                  Disable
+                </Button>
+                <Button onClick={() => setIsAvailabilityModalOpen(false)}>
+                  Cancel
+                </Button>
+              </HStack>
+            </VStack>
           </ModalBody>
         </ModalContent>
       </Modal>

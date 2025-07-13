@@ -182,12 +182,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		
 		try {
 			setIsLoadingBids(true)
-			console.log(`Fetching bids for property ID: ${propertyId}, current user: ${user.uid}`)
 			const response = await fetchWithAuth(`${API_URL}/properties/${propertyId}/bids`)
 			
 			if (response.ok) {
 				const responseData = await response.json()
-				console.log('Fetched property bids response:', responseData)
 				
 				// Handle different response structures
 				let bidsArray: PropertyBid[] = []
@@ -195,12 +193,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				if (Array.isArray(responseData)) {
 					// If the response is directly an array of bids
 					bidsArray = responseData
-					console.log('Response is a direct array with length:', bidsArray.length)
 				} else if (responseData && typeof responseData === 'object') {
 					// If the response is an object that contains a bids property
 					if (Array.isArray(responseData.bids)) {
 						bidsArray = responseData.bids
-						console.log('Response has bids array with length:', bidsArray.length)
 					} else {
 						console.log('Response has no bids array or empty bids:', responseData.bids)
 					}
@@ -210,12 +206,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				
 				// Check if there are any bids from the current user
 				const userBids = bidsArray.filter(bid => bid.userId === user.uid)
-				console.log(`Found ${userBids.length} bids from current user (${user.uid})`)
 				if (userBids.length > 0) {
 					console.log('User bids:', userBids)
 				}
 				
-				console.log('Final parsed bids array:', bidsArray)
 				setPropertyBids(bidsArray)
 			} else {
 				console.error('Failed to fetch property bids:', await response.text())
@@ -230,9 +224,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	}, [user])
 
 	// Also add a useEffect to log when propertyBids changes
-	useEffect(() => {
-		console.log('propertyBids state updated:', propertyBids)
-	}, [propertyBids])
+
 
 	// Update the useEffect for ensureUserProfile to avoid repeated API calls
 	useEffect(() => {
@@ -248,20 +240,16 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			try {
 				isLoadingUsers.current = true
-				console.log('User authenticated but profile not found in local state, checking API...')
-				console.log('Current user:', user)
+				
 				
 				// Check if the user already exists in the API but not in our local state
 				const checkResponse = await fetchWithAuth(`${API_URL}/users/profile`)
 				
 				if (checkResponse.ok) {
 					// User exists in API
-					console.log('User exists in API but not in local state, refreshing users...')
 					const userData = await checkResponse.json()
-					console.log('Existing user found:', userData)
 					await fetchUsers()
 				} else if (checkResponse.status === 404 || checkResponse.status === 401) {
-					console.log('User does not exist in API, creating new user profile...')
 					
 					// Create new user with the POST create user endpoint
 					const createResponse = await fetchWithAuth(`${API_URL}/users/create`, {
@@ -435,7 +423,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		const lng = lngIndex * GRID_SIZE
 		const lat = latIndex * GRID_SIZE_LAT
 		
-		console.log(`Flying to property location: ${lng}, ${lat}`)
 		
 		// Fly to the property location and zoom in enough to see it
 		map.current.flyTo({
@@ -529,7 +516,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		if (map.current && map.current.isStyleLoaded()) {
 			// Force update the selection layer with the new color
 			if (map.current.getLayer(GRID_SELECTION_LAYER_ID)) {
-				console.log('Applying new selection color:', selectionColor)
 				map.current.setPaintProperty(
 					GRID_SELECTION_LAYER_ID,
 					'fill-color',
@@ -706,11 +692,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			return
 		}
 		
-		console.log('Property click event at:', e.lngLat)
 		
 		// Query all features at the clicked point
 		const features = map.current.queryRenderedFeatures(e.point)
-		console.log('All features at click point:', features.length)
 		
 		// Filter to just properties layer
 		const propertyFeatures = map.current.queryRenderedFeatures(e.point, {
@@ -791,7 +775,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				}
 				
 				// Select all cells in this property
-				console.log(`Selecting ${property.cells.length} cells from property ${propertyId}`)
 				
 				// Clear current selection
 				selectedCells.current.clear()
@@ -807,7 +790,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				// Get location info for the property cells
 				getLocationFromCells(property.cells).then(location => {
 					if (location) {
-						console.log('Property location info:', location)
 						// If we have an address but no stored address in the property, suggest updating it
 						if (location.address && !propertyData?.address) {
 							toast({
@@ -824,7 +806,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				})
 			}
 		} else {
-			console.log('No property features found at click location')
+			console.log('No property features foun at click location')
 		}
 	}, [user, usersRef, toast, updateSelection, fetchPropertyBids, getLocationFromCells])
 
@@ -848,7 +830,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			// Create features for all properties
 			const allFeatures: GeoJSON.Feature[] = []
 			// Log all user IDs we have data for
-			console.log('User IDs in usersRef:', Object.keys(usersRef.current).join(', '))
 			
 			// Count properties per user for debugging
 			let totalPropertyCount = 0
@@ -937,7 +918,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				})
 			})
 			
-			console.log(`Loaded ${allFeatures.length} total property cells`)
 			
 			// If no features were loaded, this is a critical failure - try to repair by fetching all properties
 			if (allFeatures.length === 0 && totalPropertyCount > 0) {
@@ -946,12 +926,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				// Schedule a fresh fetch of all properties
 				setTimeout(async () => {
 					try {
-						console.log('Attempting to repair property loading...')
 						const propsResponse = await fetchWithAuth(`${API_URL}/properties`)
 						
 						if (propsResponse.ok) {
 							const properties = await propsResponse.json()
-							console.log(`Repair: Fetched ${properties.length} properties directly from API`)
 							
 							// Force a new attempt to load properties after fetching fresh data
 							const uniqueUserIds = [...new Set(properties.map((prop: UserProperty) => prop.owner))]
@@ -974,7 +952,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 									}
 								}
 							}
-							console.log(`Repair: Fetched ${fetchedUsers} users`)
 							
 							// Try loading properties again after repairing
 							setTimeout(() => {
@@ -1051,7 +1028,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					);
 				}
 			} else {
-				console.log('Creating new properties source and layer')
 				// Add source first
 				try {
 					map.current.addSource(PROPERTIES_SOURCE_ID, {
@@ -1120,7 +1096,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			}
 			
 			setPropertiesLoaded(true)
-			console.log('Properties successfully loaded on map')
 			return true
 		} catch (err) {
 			console.error('Error loading properties on map:', err)
@@ -1133,12 +1108,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		const success = loadProperties()
 		
 		if (!success && propertyLoadAttempts < maxPropertyLoadAttempts) {
-			console.log(`Property loading attempt ${propertyLoadAttempts + 1} failed, retrying in 500ms...`)
 			setTimeout(() => {
 				setPropertyLoadAttempts(prev => prev + 1)
 			}, 500)
 		} else if (success) {
-			console.log('Property loading successful')
 			setPropertyLoadAttempts(0)
 		} else {
 			console.warn(`Failed to load properties after ${maxPropertyLoadAttempts} attempts`)
@@ -1155,18 +1128,15 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// More robust useEffect for loading properties when map and data are ready
 	useEffect(() => {
 		if (map.current && styleLoaded && usersRef.current && Object.keys(usersRef.current).length > 0) {
-			console.log('Map and users data ready - loading properties from useEffect')
 			// Try multiple times with increasing delays to ensure properties load
 			loadProperties() // First immediate attempt
 			
 			// Second attempt after 500ms
 			setTimeout(() => {
-				console.log('Second property loading attempt')
 				loadProperties()
 				
 				// Third attempt after another second
 				setTimeout(() => {
-					console.log('Third property loading attempt')
 					loadProperties()
 				}, 1000)
 			}, 500)
@@ -1178,10 +1148,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		if (map.current && !styleLoaded) {
 			const checkStyleLoaded = () => {
 				if (map.current?.isStyleLoaded()) {
-					console.log('Style fully loaded from style checker')
 					setStyleLoaded(true)
 				} else {
-					console.log('Style not yet loaded, checking again in 100ms')
 					setTimeout(checkStyleLoaded, 100)
 				}
 			}
@@ -1193,7 +1161,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			const styleDataHandler = () => {
 				if (mapRef.isStyleLoaded()) {
-					console.log('Style loaded from styledata event')
 					setStyleLoaded(true)
 				}
 			};
@@ -1220,10 +1187,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	useEffect(() => {
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible' && map.current && styleLoaded && user) {
-				console.log('Window gained focus, refreshing data...')
 				fetchUsers().then(() => {
 					setTimeout(() => {
-						console.log('Loading properties after visibility change')
 						loadProperties()
 					}, 200)
 				})
@@ -1232,7 +1197,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		
 		// Force property loading when the page is loaded/refreshed
 		const handlePageLoad = () => {
-			console.log('Page loaded or refreshed - forcing property load')
 			if (map.current && styleLoaded) {
 				fetchUsers().then(() => {
 					// Try loading properties multiple times with increasing delays
@@ -1261,7 +1225,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 	// Improved refreshPropertyDisplay with retry
 	const refreshPropertyDisplay = useCallback(() => {
-		console.log('Refreshing property display')
 		
 		// First reload users data, then properties
 		fetchUsers().then(() => {
@@ -1270,7 +1233,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// If direct loading failed, try again after a delay
 			if (!success) {
-				console.log('First property load attempt failed, retrying...')
 				setTimeout(() => {
 					loadProperties()
 				}, 1000)
@@ -1294,7 +1256,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					if (location && location.address) {
 						// Auto-fill the address with detected location
 						setPropertyAddress(location.address)
-						console.log('Auto-detected address:', location.address)
 					}
 				} catch (error) {
 					console.error('Error auto-detecting address:', error)
@@ -1365,15 +1326,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Function to handle property purchase
 	const handleBuyListedProperty = async () => {
 		if (!selectedProperty || !user) return
-		console.log('selectedProperty', selectedProperty)
-		console.log('user', user)
 		
 		try {
 			setIsLoading(true)
 			
 			// Directly fetch the current user data from API instead of relying on local state
 			const userResponse = await fetchWithAuth(`${API_URL}/users/profile`)
-			console.log('userResponse', userResponse)
 			
 			if (!userResponse.ok) {
 				toast({
@@ -1388,7 +1346,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Get fresh user data directly from API
 			const userData = await userResponse.json()
-			console.log('Fresh user data from API:', userData)
 			
 			// Update local user data
 			if (usersRef.current) {
@@ -1557,7 +1514,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		let updateTimeout: number | null = null
 
 		try {
-			console.log('Initializing map...')
 
 			// Default options
 			const defaultOptions: mapboxgl.MapboxOptions = {
@@ -1585,7 +1541,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				if (!mounted) return
 
 				if (newMap.isStyleLoaded()) {
-					console.log('Style is fully loaded')
 					if (mounted) {
 						setStyleLoaded(true)
 						drawGrid() // Draw grid when style is loaded
@@ -1602,14 +1557,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						}
 					}
 				} else {
-					console.log('Style not fully loaded, retrying...')
 					setTimeout(checkStyleLoaded, 100)
 				}
 			}
 
 			// Map fully loaded event
 			newMap.on('load', () => {
-				console.log('Map fully loaded!')
 				if (mounted) {
 					setLoading(false)
 					setMapInstance(newMap)
@@ -1619,7 +1572,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 			// Listen for style data events
 			newMap.on('styledata', () => {
-				console.log('Style data event received')
 				checkStyleLoaded()
 				
 				// Refresh user tokens when style is loaded
@@ -1629,7 +1581,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				
 				// Also reload properties when style loads
 				if (newMap.isStyleLoaded()) {
-					console.log('Style loaded - refreshing all properties')
 					
 					// Use the same function as map movement to fetch ALL properties
 					setTimeout(() => {
@@ -1639,7 +1590,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							.then(allProperties => {
 								if (allProperties.length === 0) return
 								
-								console.log(`Fetched ${allProperties.length} properties after style load`)
 								
 								// Group properties by owner to update our users object
 								const propertiesByOwner: Record<string, UserProperty[]> = {}
@@ -1705,7 +1655,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			const refreshAllProperties = () => {
 				if (!map.current || !map.current.isStyleLoaded()) return
 				
-				console.log('Map moved - refreshing all properties')
 				
 				// Set a timeout to avoid too many requests
 				if (moveEndTimeoutRef.current) {
@@ -1715,13 +1664,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				moveEndTimeoutRef.current = window.setTimeout(() => {
 					// Store the current user ID for comparison during refresh
 					const currentUserId = user?.uid
-					console.log('Current user ID for property refresh:', currentUserId || 'Not logged in', 'Comparing with "user?.uid":', user?.uid)
 					
 					// Direct API call to get ALL properties
 					fetch(`${API_URL}/properties`)
 						.then(res => res.json())
 						.then(allProperties => {
-							console.log(`Fetched ${allProperties.length} properties from API after map movement`)
 							
 							if (allProperties.length === 0) return
 							
@@ -1801,7 +1748,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				if (updateTimeout) {
 					window.clearTimeout(updateTimeout)
 				}
-				console.log('Cleaning up map')
 				if (map.current) {
 					map.current.remove()
 				}
@@ -1833,7 +1779,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			try {
 				setStyleLoaded(false)
 				map.current.setStyle(`mapbox://styles/mapbox/${currentStyle}`)
-				console.log(`Map style changed to: ${currentStyle}`)
 			} catch (err) {
 				console.error('Error changing map style:', err)
 			}
@@ -1921,7 +1866,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// First get the location address
 			const locationInfo = await getLocationFromCells(selectedCellArray);
-			if (!locationInfo || !locationInfo.address) {
+			console.log('locationInfo', locationInfo)
+			if (!locationInfo) {
 				toast({
 					title: "Location Error",
 					description: "Could not determine the location for the selected cells.",
@@ -1934,7 +1880,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			}
 
 			// Store the detected address for later use
-			setDetectedAddress(locationInfo.address);
+			setDetectedAddress(locationInfo.address || `${locationInfo.place}, ${locationInfo.region}, ${locationInfo.country}`);
 
 			// Now fetch the base price using the location address
 			setIsLoadingBasePrice(true);
@@ -1943,7 +1889,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				headers: {
 					'Content-Type': 'application/json',
 				},
-				body: JSON.stringify({ address: locationInfo.address }), // Use the address from the location info object
+				body: JSON.stringify({ address: locationInfo.address || `${locationInfo.place}, ${locationInfo.region}, ${locationInfo.country}` }), // Use the address from the location info object
 			});
 
 			if (!priceResponse.ok) {
@@ -2010,7 +1956,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				throw new Error('Failed to retrieve user profile after updates')
 			}
 			
-			console.log('Working with user profile:', usersRef.current[user.uid])
 			
 			// Calculate total cost using base price
 			const totalCost = selectedCells.current.size * basePrice
@@ -2058,7 +2003,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				throw new Error(`Purchase failed: ${errorText}`);
 			}
 			
-			console.log('purchaseResponse', purchaseResponse)
 			
 			// Add detected location to success message if available
 			const successMsg = detectedAddress ? 
@@ -2093,7 +2037,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Fly to newly purchased property after a short delay
 			setTimeout(() => {
-				console.log('Flying to newly purchased property')
 				flyToProperty(propertyId)
 			}, 1000)
 
@@ -2118,11 +2061,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Add click handler when map loads
 	useEffect(() => {
 		if (map.current && styleLoaded) {
-			console.log('Adding property click handler to map')
 			map.current.on('click', PROPERTIES_LAYER_ID, handlePropertyClick)
 			
 			return () => {
-				console.log('Removing property click handler from map')
 				map.current?.off('click', PROPERTIES_LAYER_ID, handlePropertyClick)
 			}
 		}
@@ -2131,10 +2072,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Update the useEffect for fetching users when map loads
 	useEffect(() => {
 		if (mapInstance && styleLoaded && !isLoadingUsers.current) {
-			console.log('Map loaded and style ready - fetching latest user data')
 			isLoadingUsers.current = true
 			fetchUsers().then(() => {
-				console.log('Users data refreshed after map load')
 				isLoadingUsers.current = false
 			}).catch(() => {
 				isLoadingUsers.current = false
@@ -2145,7 +2084,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Update the useEffect for loading properties when user changes
 	useEffect(() => {
 		if (user && mapInstance && styleLoaded && Object.keys(usersRef.current || {}).length > 0) {
-			console.log('User logged in, refreshing properties')
 			loadProperties()
 		}
 	}, [user, mapInstance, styleLoaded, loadProperties])
@@ -2153,24 +2091,20 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	// Add a dedicated effect for initial mount to load properties
 	useEffect(() => {
 		// This effect runs once on component mount
-		console.log('Component mounted - scheduling initial property load');
 		
 		// Wait a moment for everything to initialize
 		const initialLoadTimeout = setTimeout(async () => {
 			if (map.current && map.current.isStyleLoaded()) {
-				console.log('Running initial property load');
 				
 				try {
 					// Then load properties
 					setTimeout(async () => {
-						console.log('Initial load: Loading all properties')
 						
 						// First get all properties directly from the API
 						try {
 							const propsResponse = await fetch(`${API_URL}/properties`)
 							if (propsResponse.ok) {
 								const allProperties = await propsResponse.json()
-								console.log(`Initial load: Found ${allProperties.length} total properties`)
 								
 								if (allProperties.length > 0) {
 									// Create user mapping for all properties
@@ -2256,7 +2190,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				// Update local state
 				if (usersRef.current) {
 					usersRef.current[user.uid] = userData;
-					console.log('Updated user tokens display:', userData.tokens);
 				}
 			}
 		} catch (error) {
@@ -2357,7 +2290,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Check if user has enough tokens
 			const userProfile = usersRef.current?.[user.uid]
-			console.log('User profile:', userProfile)
 			if (!userProfile || userProfile.tokens < bidAmount) {
 				toast({
 					title: 'Insufficient Tokens',
@@ -2369,7 +2301,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				return
 			}
 			
-			console.log(`Placing bid on property ${selectedProperty.id}, amount: ${bidAmount}`)
 			
 			// Send bid to API
 			const response = await fetchWithAuth(`${API_URL}/properties/${selectedProperty.id}/bid`, {
@@ -2389,7 +2320,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// Get the response data to confirm bid was placed
 			const responseData = await response.json().catch(() => null)
-			console.log('Bid placement response:', responseData)
 			
 			// Bid successful
 			toast({
@@ -2405,7 +2335,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			setBidMessage('')
 			
 			// Refresh bids to see the new bid
-			console.log('Refreshing bids after placing a new bid')
 			await fetchPropertyBids(selectedProperty.id)
 			
 			// Update user tokens
@@ -2428,7 +2357,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					
 					// If found, try to select it
 					if (myBidsTabIndex >= 0) {
-						console.log('Switching to My Bids tab')
 						const tabsElement = document.querySelector('.chakra-tabs')
 						if (tabsElement && 'index' in tabsElement) {
 							tabsElement.index = myBidsTabIndex
@@ -2614,7 +2542,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	const findAndZoomToProperty = useCallback(async (propertyId: string) => {
 		if (!mapInstance || !propertyId) return;
 		
-		console.log(`Trying to find property with ID: ${propertyId}`);
 		
 		try {
 			// First try to find the property in the local users data
@@ -2633,16 +2560,13 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					// Store the property ID but don't open the modal
 					setCurrentPropertyId(propertyId);
 					
-					console.log(`Found property in local data: ${property.name || property.id}`);
-					console.log(`Property has ${propCells.length} cells`);
-					console.log(`Property cells:`, propCells);
+					
 					break;
 				}
 			}
 			
 			// If not found locally, try to fetch from API
 			if (!propertyFound) {
-				console.log("Property not found in local data, fetching from API...");
 				const response = await fetch(`${API_URL}/properties/${propertyId}`);
 				
 				if (response.ok) {
@@ -2652,9 +2576,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					// Store the property ID but don't open the modal
 					setCurrentPropertyId(propertyId);
 					
-					console.log(`Found property from API: ${property.name || property.id}`);
-					console.log(`Property has ${propCells.length} cells`);
-					console.log(`Property cells:`, propCells);
+					
 				} else {
 					console.error("Failed to fetch property:", response.statusText);
 					toast({
@@ -2670,11 +2592,9 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			
 			// If we have cells, calculate their center and zoom to it
 			if (propCells.length > 0) {
-				console.log("Processing property cells for zooming");
 				
 				// Try to find the correct format for cells
 				const firstCell = propCells[0];
-				console.log("First cell format:", firstCell);
 				
 				let totalLng = 0;
 				let totalLat = 0;
@@ -2739,17 +2659,14 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 					}
 				}
 				
-				console.log(`Cell format detected: ${cellFormat}, found ${validCells} valid cells`);
 				
 				if (validCells > 0) {
 					const centerLng = totalLng / validCells;
 					const centerLat = totalLat / validCells;
 					
-					console.log(`Calculated center point: [${centerLng}, ${centerLat}] from ${validCells} valid cells`);
 					
 					// Check if coordinates are outside valid range for mapbox
 					if (Math.abs(centerLng) > 180 || Math.abs(centerLat) > 90) {
-						console.log("Coordinates outside valid range, attempting to normalize...");
 						
 						// This is the value in the sample data: "-740031,577666"
 						// These are actually cell grid indices, not lat/lng coordinates
@@ -2784,7 +2701,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							const gridCenterLng = totalLng / validCells;
 							const gridCenterLat = totalLat / validCells;
 							
-							console.log(`Converted to grid coordinates: [${gridCenterLng}, ${gridCenterLat}]`);
 							
 							// Validate the resulting coordinates
 							if (Math.abs(gridCenterLng) <= 180 && Math.abs(gridCenterLat) <= 90) {
@@ -2796,7 +2712,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 									duration: 2000
 								});
 								
-								console.log(`Executed flyTo with grid coordinates: [${gridCenterLng}, ${gridCenterLat}]`);
 							} else {
 								throw new Error("Converted coordinates still outside valid range");
 							}
@@ -2814,14 +2729,12 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							duration: 2000
 						});
 						
-						console.log(`Executed flyTo command to [${centerLng}, ${centerLat}]`);
 					}
 				} else {
 					console.error("No valid coordinates found in property cells");
 					
 					// Last resort: if cells might be indexes rather than coordinates
 					// For indexes, we need to convert them to actual coordinates
-					console.log("Trying to interpret cells as grid indexes...");
 					
 					let indexLngSum = 0;
 					let indexLatSum = 0;
@@ -2847,7 +2760,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						const centerLng = indexLngSum / validIndexCells;
 						const centerLat = indexLatSum / validIndexCells;
 						
-						console.log(`Index-based center point: [${centerLng}, ${centerLat}] from ${validIndexCells} valid cells`);
 						
 						// Zoom to property with index-based coordinates
 						mapInstance.flyTo({
@@ -2858,7 +2770,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							duration: 2000
 						});
 						
-						console.log(`Executed index-based flyTo command to [${centerLng}, ${centerLat}]`);
 					} else {
 						console.error("Failed to interpret cells in any format");
 						toast({
@@ -2901,7 +2812,6 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 		const propertyId = urlParams.get('propertyId');
 		
 		if (propertyId) {
-			console.log(`Found propertyId in URL: ${propertyId}, will attempt to zoom to it`);
 			// Wait a bit for the map to be ready
 			setTimeout(() => {
 				findAndZoomToProperty(propertyId);
