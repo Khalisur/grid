@@ -62,6 +62,10 @@ import { v4 as uuidv4 } from 'uuid'
 import { Property as UserProperty } from '../stores/userStore'
 import { fetchWithAuth } from '../firebase/authUtils'
 import useLocationFromCells from '../hooks/useLocationFromCells'
+import { useAdmin } from '../hooks/useAdmin'
+import { TreasureModal } from './TreasureModal'
+import { TreasureDiscoveryModal } from './TreasureDiscoveryModal'
+import { TreasureDiscovery } from '../types/treasure'
 
 // Set Mapbox access token
 mapboxgl.accessToken =
@@ -115,6 +119,18 @@ interface PropertyWithBids extends UserProperty {
 	bids?: PropertyBid[]
 }
 
+// Define treasure discovery interface
+interface TreasureDiscovery {
+	id: string
+	name: string
+	description: string
+	rewardType: string
+	rewardAmount: number
+	rewardMessage: string
+	treasureCells: string[]
+	overlappingCells: string[]
+}
+
 export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	initialOptions,
 	children,
@@ -158,6 +174,16 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	const [bidAmount, setBidAmount] = useState<number>(0)
 	const [bidMessage, setBidMessage] = useState('')
 	const [isLoadingBids, setIsLoadingBids] = useState(false)
+
+	// Admin hook for treasure functionality
+	const { isAdmin } = useAdmin()
+
+	// Treasure modal state
+	const [isTreasureModalOpen, setIsTreasureModalOpen] = useState(false)
+
+	// Treasure discovery modal state
+	const [isTreasureDiscoveryOpen, setIsTreasureDiscoveryOpen] = useState(false)
+	const [discoveredTreasure, setDiscoveredTreasure] = useState<TreasureDiscovery | null>(null)
 
 	// Get map settings from store
 	const { currentStyle, gridColor, selectionColor } = useMapStore()
@@ -2003,19 +2029,45 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				throw new Error(`Purchase failed: ${errorText}`);
 			}
 			
+			// Parse the response to check for treasure discovery
+			const purchaseData = await purchaseResponse.json().catch(() => ({}))
 			
-			// Add detected location to success message if available
-			const successMsg = detectedAddress ? 
-				`Property at "${detectedAddress}" purchased successfully for ${totalCost} tokens` :
-				`Property purchased successfully for ${totalCost} tokens`
-			
-			toast({
-				title: 'Success',
-				description: successMsg,
-				status: 'success',
-				duration: 3000,
-				isClosable: true,
-			})
+			// Check if a treasure was discovered
+			if (purchaseData.isTreasure && purchaseData.treasure) {
+				// Set treasure discovery data
+				setDiscoveredTreasure(purchaseData.treasure)
+				
+				// Show treasure discovery modal after a short delay for better UX
+				setTimeout(() => {
+					setIsTreasureDiscoveryOpen(true)
+				}, 1000)
+				
+				// Add detected location to success message if available
+				const successMsg = detectedAddress ? 
+					`🎉 TREASURE FOUND! Property at "${detectedAddress}" purchased for ${totalCost} tokens!` :
+					`🎉 TREASURE FOUND! Property purchased for ${totalCost} tokens!`
+				
+				toast({
+					title: '🎊 Treasure Discovery! 🎊',
+					description: successMsg,
+					status: 'success',
+					duration: 5000,
+					isClosable: true,
+				})
+			} else {
+				// Regular success message without treasure
+				const successMsg = detectedAddress ? 
+					`Property at "${detectedAddress}" purchased successfully for ${totalCost} tokens` :
+					`Property purchased successfully for ${totalCost} tokens`
+				
+				toast({
+					title: 'Success',
+					description: successMsg,
+					status: 'success',
+					duration: 3000,
+					isClosable: true,
+				})
+			}
 			
 			// Clear selection after purchase
 			selectedCells.current.clear()
@@ -2902,9 +2954,33 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						boxShadow="md"
 						isLoading={isLoading}
 						loadingText="Buying..."
+						mr={isAdmin ? 2 : 0}
 					>
 						Buy Property ({selectedCells.current.size * propertyPrice} tokens)
 					</Button>
+					{isAdmin && (
+						<Button
+							colorScheme="purple"
+							size="sm"
+							onClick={() => {
+								if (selectedCells.current.size === 0) {
+									toast({
+										title: 'No Cells Selected',
+										description: 'Please select at least one cell to set as treasure.',
+										status: 'warning',
+										duration: 3000,
+										isClosable: true,
+									})
+									return
+								}
+								setIsTreasureModalOpen(true)
+							}}
+							boxShadow="md"
+							isLoading={isLoading}
+						>
+							Set Property as Treasure
+						</Button>
+					)}
 				</Box>
 
 				{/* Show user tokens */}
@@ -3375,6 +3451,41 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 				{/* Add the PriceConfirmationModal */}
 				<PriceConfirmationModal />
+
+				{/* Add the TreasureModal for admin users */}
+				{isAdmin && (
+					<TreasureModal
+						isOpen={isTreasureModalOpen}
+						onClose={() => setIsTreasureModalOpen(false)}
+						selectedCells={Array.from(selectedCells.current)}
+						onSuccess={() => {
+							// Clear selection after successful treasure creation
+							selectedCells.current.clear()
+							updateSelection()
+							toast({
+								title: 'Success',
+								description: 'Treasure has been set successfully!',
+								status: 'success',
+								duration: 3000,
+								isClosable: true,
+							})
+						}}
+					/>
+				)}
+
+				{/* Add the TreasureDiscoveryModal for when users find treasures */}
+				<TreasureDiscoveryModal
+					isOpen={isTreasureDiscoveryOpen}
+					onClose={() => {
+						setIsTreasureDiscoveryOpen(false)
+						setDiscoveredTreasure(null)
+						// Update token display after treasure discovery
+						setTimeout(() => {
+							updateUserTokensDisplay()
+						}, 500)
+					}}
+					treasureInfo={discoveredTreasure}
+				/>
 			</Box>
 		</>
 	)
