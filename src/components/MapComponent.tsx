@@ -65,7 +65,7 @@ import useLocationFromCells from '../hooks/useLocationFromCells'
 import { useAdmin } from '../hooks/useAdmin'
 import { TreasureModal } from './TreasureModal'
 import { TreasureDiscoveryModal } from './TreasureDiscoveryModal'
-import { TreasureDiscovery } from '../types/treasure'
+import { TreasureDiscovery as TreasureDiscoveryType } from '../types/treasure'
 
 // Set Mapbox access token
 mapboxgl.accessToken =
