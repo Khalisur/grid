@@ -267,17 +267,15 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 			try {
 				isLoadingUsers.current = true
 				
-				
 				// Check if the user already exists in the API but not in our local state
 				const checkResponse = await fetchWithAuth(`${API_URL}/users/profile`)
 				
 				if (checkResponse.ok) {
-					// User exists in API
+					// User exists in API, just fetch the data
 					const userData = await checkResponse.json()
 					await fetchUsers()
 				} else if (checkResponse.status === 404 || checkResponse.status === 401) {
-					
-					// Create new user with the POST create user endpoint
+					// User doesn't exist, try to create them
 					const createResponse = await fetchWithAuth(`${API_URL}/users/create`, {
 						method: 'POST',
 						headers: {
@@ -306,18 +304,33 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 							updateUserTokensDisplay();
 						}, 300);
 					} else {
-						throw new Error('Failed to create user profile')
+						// Check if the error is because user already exists
+						const errorData = await createResponse.json().catch(() => ({ message: 'Unknown error' }))
+						
+						if (createResponse.status === 409 || errorData.message?.includes('already exists')) {
+							// User already exists - this is fine, just fetch the data
+							console.log('User already exists, fetching existing profile')
+							await fetchUsers()
+						} else {
+							// Different error - this is a real problem
+							throw new Error(`Failed to create user profile: ${errorData.message || 'Unknown error'}`)
+						}
 					}
 				}
 			} catch (error) {
-				console.error('Failed to create user profile:', error)
-				toast({
-					title: 'Error',
-					description: 'Failed to create user profile. Please check console for details.',
-					status: 'error',
-					duration: 5000,
-					isClosable: true,
-				})
+				console.error('Error in ensureUserProfile:', error)
+				
+				// Only show error toast for real errors, not "user already exists"
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+				if (!errorMessage.includes('already exists')) {
+					toast({
+						title: 'Error',
+						description: 'Failed to load user profile. Please refresh the page.',
+						status: 'error',
+						duration: 5000,
+						isClosable: true,
+					})
+				}
 			} finally {
 				isLoadingUsers.current = false
 			}
@@ -325,7 +338,10 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 
 		// Run when user is available
 		if (user) {
-			ensureUserProfile()
+			// Add a small delay to allow AuthModal to complete user creation first
+			setTimeout(() => {
+				ensureUserProfile()
+			}, 1000)
 		}
 	}, [user, fetchUsers, toast])
 
