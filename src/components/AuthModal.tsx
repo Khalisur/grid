@@ -32,7 +32,6 @@ import {
 	sendPasswordResetEmail,
 } from 'firebase/auth'
 import { useUserStore } from '../stores/userStore'
-import { fetchWithAuth } from '../firebase/authUtils'
 
 interface AuthModalProps {
 	isOpen: boolean
@@ -47,143 +46,27 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 	const [showPassword, setShowPassword] = useState(false)
 	const toast = useToast()
 	const addUser = useUserStore((state) => state.addUser)
-	const fetchUsers = useUserStore((state) => state.fetchUsers)
 
 	const handleSignUp = async () => {
 		try {
 			setLoading(true)
 			
-			// First create the Firebase auth user
+			// Create the Firebase auth user
 			const userCredential = await createUserWithEmailAndPassword(
 				auth,
 				email,
 				password,
 			)
-			const user = userCredential.user;
-			
-			// Fetch users first to ensure we have the most up-to-date data
-			await fetchUsers();
-			
-			// Get users from the store (after fetching)
-			const users = useUserStore.getState().users;
-			
-			// Check if user already exists in our local state FIRST
-			if (users && users[user.uid]) {
-				console.log('User already exists in local state:', users[user.uid]);
-				
-				// If the user exists but the name is different (or 'User'), update it
-				if (name && (users[user.uid].name === 'User' || users[user.uid].name !== name)) {
-					console.log('Updating existing user name from', users[user.uid].name, 'to', name);
-					
-					// Get the API URL
-					const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-					
-					
-					// Get the user's actual ID (not uid) that JSON Server uses
-					const response = await fetch(`${API_URL}/users/profile`);
-					const existingUsers = await response.json();
-					
-					if (existingUsers && existingUsers.length > 0) {
-						const userId = existingUsers[0].id; // Get the JSON Server ID
-						
-						// Update the name
-						const updateResponse = await fetch(`${API_URL}/users/${userId}`, {
-							method: 'PATCH',
-							headers: {
-								'Content-Type': 'application/json',
-							},
-							body: JSON.stringify({
-								name: name,
-							}),
-						});
-						
-						if (updateResponse.ok) {
-							await fetchUsers(); // Refresh users after update
-							toast({
-								title: 'Profile Updated',
-								description: 'Your profile name has been updated',
-								status: 'success',
-								duration: 3000,
-								isClosable: true,
-							});
-						}
-					}
-				} else {
-					toast({
-						title: 'Account linked',
-						description: 'Your account has been linked with your existing profile',
-						status: 'success',
-						duration: 3000,
-						isClosable: true,
-					});
-				}
-				onClose();
-				return;
-			}
+			const user = userCredential.user
 
-			// Double check against the API directly
-			const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-			const checkResponse = await fetch(`${API_URL}/users/profile`);
-			const existingUsers = await checkResponse.json();
-			
-			if (existingUsers && existingUsers.length > 0) {
-				console.log('User already exists in database, not creating duplicate:', existingUsers[0]);
-				
-				// Check if we need to update the name
-				if (name && (existingUsers[0].name === 'User' || existingUsers[0].name !== name)) {
-					console.log('Updating existing user name in API from', existingUsers[0].name, 'to', name);
-					
-					const userId = existingUsers[0].id; // Get the JSON Server ID
-					
-					// Update the name
-					const updateResponse = await fetch(`${API_URL}/users/${userId}`, {
-						method: 'PATCH',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({
-							name: name,
-						}),
-					});
-					
-					if (updateResponse.ok) {
-						toast({
-							title: 'Profile Updated',
-							description: 'Your profile has been updated with your chosen name',
-							status: 'success',
-							duration: 3000,
-							isClosable: true,
-						});
-					} else {
-						toast({
-							title: 'Account Linked',
-							description: 'Your account has been linked to your existing profile',
-							status: 'success',
-							duration: 3000,
-							isClosable: true,
-						});
-					}
-				} else {
-					// The user is already in our database with the correct name
-					toast({
-						title: 'Account linked',
-						description: 'Your account has been linked to your existing profile',
-						status: 'success',
-						duration: 3000,
-						isClosable: true,
-					});
-				}
-				
-				// Refresh users to ensure local state is up-to-date
-				await fetchUsers();
-			} else {
-				// User doesn't exist in our database, create a new profile
-				console.log('Creating new user profile in database with name:', name);
+			// Create user in our database - the backend will handle checking if user exists
+			// This is much more efficient than multiple API calls to check existence
+			try {
 				await addUser({
 					uid: user.uid,
 					email: user.email || '',
 					name: name || user.email?.split('@')[0] || 'User',
-				});
+				})
 				
 				toast({
 					title: 'Account created successfully',
@@ -191,10 +74,22 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 					status: 'success',
 					duration: 3000,
 					isClosable: true,
-				});
+				})
+			} catch (error) {
+				// If addUser fails (e.g., user already exists), show appropriate message
+				console.log('User might already exist or API error:', error)
+				
+				// Still show success since Firebase user was created
+				toast({
+					title: 'Account linked',
+					description: 'Your account has been linked to your existing profile',
+					status: 'success',
+					duration: 3000,
+					isClosable: true,
+				})
 			}
 			
-			onClose();
+			onClose()
 		} catch (error) {
 			console.error('Signup error:', error)
 			toast({
@@ -234,91 +129,42 @@ export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
 	}
 
 	const handleGoogleSignIn = async () => {
-		console.log('Google sign in started');
+		console.log('Google sign in started')
 		setLoading(true)
 		const provider = new GoogleAuthProvider()
 		try {
 			const result = await signInWithPopup(auth, provider)
 			const user = result.user
 
-			// First check if this user exists in our database
-			const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-			
+			// Try to create user in our database - backend will handle if user already exists
 			try {
-				// Check if user exists using the Firebase auth token
-				console.log('Checking if user exists in firebase with UID:', user.uid);
-				const checkResponse = await fetchWithAuth(`${API_URL}/users/profile`);
-				const responseData = await checkResponse.json();
-				console.log('Response data--->:', responseData);
+				await addUser({
+					uid: user.uid,
+					email: user.email || '',
+					name: user.displayName || user.email?.split('@')[0] || 'User',
+				})
 				
-				// If we get a successful response (not an error message), the user exists
-				if (checkResponse.ok && !responseData.message) {
-					console.log('User exists in database:', responseData);
-					
-					// Update local store and notify user
-					await fetchUsers();
-					toast({
-						title: 'Logged in successfully',
-						description: 'Welcome back!',
-						status: 'success',
-						duration: 3000,
-						isClosable: true,
-					});
-				} else {
-					// User doesn't exist in our database, create them
-					console.log('Creating new user in database for Google user:', user.displayName);
-					
-					// Call addUser to create the user record in the database
-					await addUser({
-						uid: user.uid,
-						email: user.email || '',
-						name: user.displayName || user.email?.split('@')[0] || 'User',
-					});
-					
-					toast({
-						title: 'Account created successfully',
-						description: 'You have been allocated 10 tokens.',
-						status: 'success',
-						duration: 3000,
-						isClosable: true,
-					});
-					
-					// Refresh users to ensure local state is up-to-date
-					await fetchUsers();
-				}
-				onClose();
-			} catch (apiError) {
-				console.error('API error checking/creating user:', apiError);
+				toast({
+					title: 'Account created successfully',
+					description: 'You have been allocated 10 tokens.',
+					status: 'success',
+					duration: 3000,
+					isClosable: true,
+				})
+			} catch (error) {
+				// If addUser fails (user already exists), show login success message
+				console.log('User already exists or API error:', error)
 				
-				// If API check fails, attempt to create the user anyway as a fallback
-				try {
-					await addUser({
-						uid: user.uid,
-						email: user.email || '',
-						name: user.displayName || user.email?.split('@')[0] || 'User',
-					});
-					
-					toast({
-						title: 'Account created',
-						description: 'Your account has been created',
-						status: 'success',
-						duration: 3000,
-						isClosable: true,
-					});
-					
-					await fetchUsers();
-					onClose();
-				} catch (addUserError) {
-					console.error('Error creating user after API check failed:', addUserError);
-					toast({
-						title: 'Error creating account',
-						description: 'Please try again later',
-						status: 'error',
-						duration: 3000,
-						isClosable: true,
-					});
-				}
+				toast({
+					title: 'Logged in successfully',
+					description: 'Welcome back!',
+					status: 'success',
+					duration: 3000,
+					isClosable: true,
+				})
 			}
+			
+			onClose()
 		} catch (error) {
 			console.error('Google Sign-In error:', error)
 			toast({
