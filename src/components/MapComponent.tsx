@@ -176,7 +176,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 	const [isLoadingBids, setIsLoadingBids] = useState(false)
 
 	// Admin hook for treasure functionality
-	const { isAdmin } = useAdmin()
+	const { isAdmin, isLoading: isAdminLoading } = useAdmin()
 
 	// Treasure modal state
 	const [isTreasureModalOpen, setIsTreasureModalOpen] = useState(false)
@@ -2970,11 +2970,11 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 						boxShadow="md"
 						isLoading={isLoading}
 						loadingText="Buying..."
-						mr={isAdmin ? 2 : 0}
+						mr={isAdmin || isAdminLoading ? 2 : 0}
 					>
 						Buy Property ({selectedCells.current.size * propertyPrice} tokens)
 					</Button>
-					{isAdmin && (
+					{(isAdmin || isAdminLoading) && (
 						<Button
 							colorScheme="purple"
 							size="sm"
@@ -2992,7 +2992,8 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 								setIsTreasureModalOpen(true)
 							}}
 							boxShadow="md"
-							isLoading={isLoading}
+							isLoading={isLoading || Boolean(isAdminLoading)}
+							isDisabled={!isAdmin && Boolean(isAdminLoading)}
 						>
 							Set Property as Treasure
 						</Button>
@@ -3469,7 +3470,7 @@ export const MapComponent: FunctionComponent<MapComponentProps> = ({
 				<PriceConfirmationModal />
 
 				{/* Add the TreasureModal for admin users */}
-				{isAdmin && (
+				{(isAdmin || isAdminLoading) && (
 					<TreasureModal
 						isOpen={isTreasureModalOpen}
 						onClose={() => setIsTreasureModalOpen(false)}
